@@ -23,6 +23,32 @@ StrategiesOption = Annotated[
     ),
 ]
 
+ModelsOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--model",
+        "-M",
+        help="Specify one or more model definitions (e.g. 'name=M1,mode=per_action,policy=mlp,features=@action_basic'). Repeat to compare multiple models.",
+    ),
+]
+
+FeaturesOption = Annotated[
+    str | None,
+    typer.Option(
+        "--features",
+        "-f",
+        help="Features to include: comma-separated names or group keywords (e.g. '@action_basic,peer_deltas', '@all', '@scores').",
+    ),
+]
+
+EvalModeOption = Annotated[
+    str,
+    typer.Option(
+        "--mode",
+        help="Evaluation mode: 'per_action' (evaluate moves individually) or 'all_actions' (evaluate entire neighborhood jointly).",
+    ),
+]
+
 VisualisationsOption = Annotated[
     list[str],
     typer.Option(

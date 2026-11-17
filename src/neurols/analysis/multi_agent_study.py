@@ -28,7 +28,11 @@ from neurols.core.runner import BatchedRunner
 from neurols.core.trajectory import Trajectory
 from neurols.strategies.base import BaseStrategy
 from neurols.strategies.classical import FirstImprovement, HillClimber, RandomWalk, TabuSearch
-from neurols.strategies.neural.features import FeatureAblationLevel, FeatureConfig
+from neurols.strategies.neural.features import (
+    FEATURE_REGISTRY,
+    FeatureAblationLevel,
+    FeatureConfig,
+)
 from neurols.strategies.neural.neural_strategy import NeuralLocalSearchStrategy
 from neurols.training.base import GenerationRecord
 from neurols.training.cma_es import CMAESOptimizer
@@ -41,9 +45,9 @@ class ModelSpec:
 
     name: str
     model_type: str  # "neural" or "classical"
-    policy_type: str = (
-        "invariant_nnet"  # "invariant_nnet", "peer_invariant_per_action", "per_action", "linear"
-    )
+    policy_type: str = "invariant_nnet"
+    eval_mode: str = "per_action"  # "per_action" or "all_actions"
+    features: str | list[str] | None = None
     ablation_level: FeatureAblationLevel = FeatureAblationLevel.FULL
     description: str = ""
 
@@ -54,6 +58,8 @@ PER_ACTION_STUDY_SUITE = [
         name="PeerInvariant_BasicSharing (Per-Action)",
         model_type="neural",
         policy_type="peer_invariant_per_action",
+        eval_mode="per_action",
+        features="@action_basic,peer_deltas",
         ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
         description="Per-action scorer with DeepSets invariant module over basic +/-1 peer distance changes.",
     ),
@@ -61,6 +67,8 @@ PER_ACTION_STUDY_SUITE = [
         name="NN_PerAction_RankedDelta (Per-Action)",
         model_type="neural",
         policy_type="per_action",
+        eval_mode="per_action",
+        features="ranked_delta",
         ablation_level=FeatureAblationLevel.RANKED_DELTA_ONLY,
         description="Per-action scorer using dual-pole normalized ranks (unshared).",
     ),
@@ -68,6 +76,8 @@ PER_ACTION_STUDY_SUITE = [
         name="NN_PerAction_DeltaOnly (Per-Action)",
         model_type="neural",
         policy_type="per_action",
+        eval_mode="per_action",
+        features="delta",
         ablation_level=FeatureAblationLevel.DELTA_ONLY,
         description="Per-action scorer using raw delta fitness only (unshared).",
     ),
@@ -89,6 +99,8 @@ ARCHITECTURES_SUITE = [
         name="InvariantNNet (All-Actions)",
         model_type="neural",
         policy_type="invariant_nnet",
+        eval_mode="all_actions",
+        features="@all",
         ablation_level=FeatureAblationLevel.FULL,
         description="Joint DeepSets InvariantNNet evaluating all N candidate actions jointly.",
     ),
@@ -96,20 +108,33 @@ ARCHITECTURES_SUITE = [
         name="PeerInvariant (Per-Action)",
         model_type="neural",
         policy_type="peer_invariant_per_action",
+        eval_mode="per_action",
+        features="@action_basic,peer_deltas",
         ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
         description="Per-action scorer using InvariantModule over peer features for each move.",
+    ),
+    ModelSpec(
+        name="Dense_Neighborhood (All-Actions)",
+        model_type="neural",
+        policy_type="dense",
+        eval_mode="all_actions",
+        features="@action_basic,best_locus",
+        ablation_level=FeatureAblationLevel.FULL,
+        description="Dense MLP evaluating entire neighborhood simultaneously in a single forward pass.",
     ),
     ModelSpec(
         name="NN_DeltaOnly (Per-Action)",
         model_type="neural",
         policy_type="per_action",
+        eval_mode="per_action",
+        features="delta",
         ablation_level=FeatureAblationLevel.DELTA_ONLY,
         description="Ablated neural model using only raw delta fitness.",
     ),
     ModelSpec(
         name="HillClimber (Baseline)",
         model_type="classical",
-        description="Greedy Steepest Ascent baseline.",
+        description="Classical Greedy Steepest Ascent baseline (group-agnostic).",
     ),
     ModelSpec(
         name="TabuSearch (Baseline)",
@@ -300,16 +325,22 @@ class MultiAgentStudy:
         # Neural Model
         group_cfg = GroupConfig(
             n_agents=n_agents,
-            share_distance=share_info,
-            share_scores=share_info,
+            share_distances=share_info,
+            share_delta_scores=share_info,
             share_ranks=share_info,
-            share_consensus=share_info,
+            share_approachs=share_info,
         )
-        feat_cfg = FeatureConfig.from_ablation_level(spec.ablation_level, n_agents=n_agents)
+        if spec.features is not None:
+            feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
+        else:
+            feat_cfg = FeatureConfig.from_ablation_level(
+                spec.ablation_level, n_agents=n_agents, mode=spec.eval_mode
+            )
 
         strategy = NeuralLocalSearchStrategy(
             name=spec.name,
             policy_type=spec.policy_type,  # type: ignore
+            eval_mode=spec.eval_mode,
             feature_config=feat_cfg,
             n_actions=self.train_problem.dimension,
             n_agents=n_agents,
@@ -350,15 +381,20 @@ class MultiAgentStudy:
         for spec in self.models:
             for m in self.agent_counts:
                 # Test whether model at m is group-aware
-                feat_cfg = FeatureConfig.from_ablation_level(spec.ablation_level, n_agents=m)
+                if spec.features is not None:
+                    feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
+                else:
+                    feat_cfg = FeatureConfig.from_ablation_level(
+                        spec.ablation_level, n_agents=m, mode=spec.eval_mode
+                    )
+
                 is_group_aware = (
                     spec.model_type == "neural"
                     and m > 1
-                    and (
-                        feat_cfg.use_action_peer_deltas
-                        or feat_cfg.use_net_peer_delta
-                        or feat_cfg.use_group_scores
-                        or feat_cfg.use_group_distances
+                    and any(
+                        FEATURE_REGISTRY[f].is_multi_agent
+                        for f in feat_cfg.features
+                        if f in FEATURE_REGISTRY
                     )
                 )
 
@@ -390,10 +426,10 @@ class MultiAgentStudy:
             # 3. Run rollout on test problem
             group_cfg = GroupConfig(
                 n_agents=m,
-                share_distance=share,
-                share_scores=share,
+                share_distances=share,
+                share_delta_scores=share,
                 share_ranks=share,
-                share_consensus=share,
+                share_approachs=share,
             )
 
             runner = BatchedRunner(

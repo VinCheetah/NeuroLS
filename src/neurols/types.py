@@ -85,7 +85,7 @@ class StoppingCriteria:
     max_time_seconds: float | None = None
     target_fitness: float | None = None
     max_stagnation_steps: int | None = None
-    
+
     def __post_init__(self) -> None:
         if not any(
             [

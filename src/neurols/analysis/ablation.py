@@ -27,9 +27,11 @@ class AblationStrategySpec:
     """Specification of a neural strategy variant for feature ablation."""
 
     name: str
-    ablation_level: FeatureAblationLevel
-    policy_type: str  # "per_action", "invariant_nnet", "linear"
-    description: str
+    ablation_level: FeatureAblationLevel = FeatureAblationLevel.FULL
+    policy_type: str = "per_action"  # "per_action", "invariant_nnet", "linear", "dense"
+    eval_mode: str = "per_action"  # "per_action" or "all_actions"
+    features: str | list[str] | None = None
+    description: str = ""
 
 
 DEFAULT_ABLATION_SUITE = [
@@ -37,30 +39,40 @@ DEFAULT_ABLATION_SUITE = [
         name="NN_DeltaOnly (PerAction)",
         ablation_level=FeatureAblationLevel.DELTA_ONLY,
         policy_type="per_action",
+        eval_mode="per_action",
+        features="delta",
         description="Individual action scoring using only raw delta fitness.",
     ),
     AblationStrategySpec(
         name="NN_RankedDelta (InvariantNNet)",
         ablation_level=FeatureAblationLevel.RANKED_DELTA_ONLY,
         policy_type="invariant_nnet",
+        eval_mode="all_actions",
+        features="ranked_delta",
         description="All actions scored jointly via InvariantNNet using normalized delta ranks.",
     ),
     AblationStrategySpec(
         name="NN_DeltaPeers (PerAction)",
         ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
         policy_type="per_action",
+        eval_mode="per_action",
+        features="@action_basic,peer_deltas",
         description="Individual action scoring with delta and sorted peer distance changes (+/-1).",
     ),
     AblationStrategySpec(
         name="NN_DeltaPeersRank (InvariantNNet)",
         ablation_level=FeatureAblationLevel.DELTA_PEERS_RANK,
         policy_type="invariant_nnet",
+        eval_mode="all_actions",
+        features="@action_basic,peer_deltas,normalized_rank",
         description="InvariantNNet with delta, peer distance changes, and group fitness ranks.",
     ),
     AblationStrategySpec(
         name="NN_FullContext (InvariantNNet)",
         ablation_level=FeatureAblationLevel.FULL,
         policy_type="invariant_nnet",
+        eval_mode="all_actions",
+        features="@all",
         description="InvariantNNet with all features (deltas, peers, ranks, stagnation, consensus).",
     ),
 ]
@@ -115,10 +127,16 @@ class AblationStudy:
                 progress_callback(spec.name, i + 1, len(specs_to_run))
 
             # Instantiate strategy
-            feat_cfg = FeatureConfig.from_ablation_level(spec.ablation_level, n_agents=n_agents)
+            if spec.features is not None:
+                feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
+            else:
+                feat_cfg = FeatureConfig.from_ablation_level(
+                    spec.ablation_level, n_agents=n_agents, mode=spec.eval_mode
+                )
             strategy = NeuralLocalSearchStrategy(
                 name=spec.name,
                 policy_type=spec.policy_type,  # type: ignore
+                eval_mode=spec.eval_mode,
                 feature_config=feat_cfg,
                 n_actions=dim,
                 n_agents=n_agents,

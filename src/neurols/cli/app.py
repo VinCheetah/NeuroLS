@@ -32,7 +32,10 @@ from neurols.analysis.plotting import (
     plot_training_convergence,
 )
 from neurols.cli.args import (
+    EvalModeOption,
+    FeaturesOption,
     KOption,
+    ModelsOption,
     NbAgentsOption,
     NbBudgetOption,
     NbGenerationsOption,
@@ -55,11 +58,15 @@ from neurols.strategies.classical import (
     FirstImprovement,
     HillClimber,
     RandomWalk,
-    SimulatedAnnealing,
     TabuSearch,
 )
 from neurols.strategies.neural import NeuralLocalSearchStrategy
-from neurols.strategies.neural.features import FeatureAblationLevel, FeatureConfig
+from neurols.strategies.neural.features import (
+    FEATURE_GROUPS,
+    FEATURE_REGISTRY,
+    FeatureAblationLevel,
+    FeatureConfig,
+)
 from neurols.training.base import GenerationRecord
 from neurols.training.cma_es import CMAESOptimizer
 from neurols.types import StoppingCriteria
@@ -70,6 +77,138 @@ app = typer.Typer(
     add_completion=True,
 )
 console = Console()
+
+
+def parse_model_spec(spec_str: str, default_name_idx: int = 1) -> ModelSpec:
+    """Parse a flexible CLI model specification string into a ModelSpec.
+
+    Supported formats:
+    1. Key-value pairs:
+       "name=M1,mode=per_action,policy=linear,features=delta"
+       "name=M2,mode=per_action,policy=mlp,features=@action_basic,peer_deltas,best_locus"
+       "name=M3,mode=all_actions,policy=invariant_nnet,features=@all"
+       "name=M4,mode=all_actions,policy=dense,features=@action_basic"
+       "name=MyHillClimber,type=classical"
+    2. Shorthand colon notation:
+       "per_action:mlp:@action_basic"
+       "all_actions:invariant_nnet:@all"
+       "M1:per_action:linear:delta,ranked_delta"
+    """
+    spec_str = spec_str.strip()
+    if "=" in spec_str:
+        tokens = [t.strip() for t in spec_str.replace(";", ",").split(",") if t.strip()]
+        params: dict[str, str] = {}
+        features_list: list[str] = []
+        for token in tokens:
+            if "=" in token:
+                k, v = token.split("=", 1)
+                k = k.strip().lower()
+                v = v.strip()
+                if k in ("feature", "features", "feat"):
+                    features_list.append(v)
+                else:
+                    params[k] = v
+            else:
+                features_list.append(token)
+
+        name = params.get("name", f"Model_{default_name_idx}")
+        m_type = params.get("type", params.get("model_type", "neural")).lower()
+        if m_type == "classical":
+            return ModelSpec(
+                name=name, model_type="classical", description=params.get("description", "")
+            )
+
+        eval_mode = params.get("mode", params.get("eval_mode", "per_action"))
+        default_policy = "mlp" if eval_mode == "per_action" else "invariant_nnet"
+        policy_type = params.get(
+            "policy", params.get("policy_type", params.get("arch", default_policy))
+        )
+        features_str = ",".join(features_list) if features_list else None
+        return ModelSpec(
+            name=name,
+            model_type="neural",
+            policy_type=policy_type,
+            eval_mode=eval_mode,
+            features=features_str,
+            description=params.get("description", f"{eval_mode} {policy_type} policy"),
+        )
+    else:
+        parts = [p.strip() for p in spec_str.split(":") if p.strip()]
+        if len(parts) == 1:
+            if parts[0] in ("per_action", "all_actions"):
+                eval_mode = parts[0]
+                policy = "mlp" if eval_mode == "per_action" else "invariant_nnet"
+                return ModelSpec(
+                    name=f"Model_{default_name_idx}",
+                    model_type="neural",
+                    policy_type=policy,
+                    eval_mode=eval_mode,
+                )
+            else:
+                return ModelSpec(
+                    name=f"Model_{default_name_idx}",
+                    model_type="neural",
+                    policy_type="mlp",
+                    eval_mode="per_action",
+                    features=parts[0],
+                )
+        elif len(parts) == 2:
+            if parts[0] in ("per_action", "all_actions"):
+                eval_mode = parts[0]
+                if parts[1] in (
+                    "linear",
+                    "mlp",
+                    "per_action",
+                    "peer_invariant_per_action",
+                    "invariant_nnet",
+                    "deepsets",
+                    "dense",
+                ):
+                    return ModelSpec(
+                        name=f"Model_{default_name_idx}",
+                        model_type="neural",
+                        policy_type=parts[1],
+                        eval_mode=eval_mode,
+                    )
+                else:
+                    policy = "mlp" if eval_mode == "per_action" else "invariant_nnet"
+                    return ModelSpec(
+                        name=f"Model_{default_name_idx}",
+                        model_type="neural",
+                        policy_type=policy,
+                        eval_mode=eval_mode,
+                        features=parts[1],
+                    )
+            else:
+                if parts[1] == "classical":
+                    return ModelSpec(name=parts[0], model_type="classical")
+                return ModelSpec(
+                    name=parts[0], model_type="neural", policy_type="mlp", eval_mode=parts[1]
+                )
+        else:
+            if parts[0] in ("per_action", "all_actions"):
+                eval_mode = parts[0]
+                policy = parts[1]
+                feat = ":".join(parts[2:])
+                return ModelSpec(
+                    name=f"Model_{default_name_idx}",
+                    model_type="neural",
+                    policy_type=policy,
+                    eval_mode=eval_mode,
+                    features=feat,
+                )
+            else:
+                name = parts[0]
+                eval_mode = parts[1]
+                policy = parts[2]
+                feat = ":".join(parts[3:]) if len(parts) > 3 else None
+                return ModelSpec(
+                    name=name,
+                    model_type="neural",
+                    policy_type=policy,
+                    eval_mode=eval_mode,
+                    features=feat,
+                )
 
 
 def _get_strategy(name: str, **kwargs) -> Any:
@@ -85,7 +224,11 @@ def _get_strategy(name: str, **kwargs) -> Any:
         return RandomWalk(exploration_rate=kwargs.get("exploration_rate", 1.0))
     elif "neural" in name_lower or "nn" in name_lower:
         return NeuralLocalSearchStrategy(
+            eval_mode=kwargs.get("eval_mode", "per_action"),
             policy_type=kwargs.get("policy_type", "linear"),
+            features=kwargs.get("features", None),
+            n_actions=kwargs.get("n_actions", 20),
+            n_agents=kwargs.get("n_agents", 1),
             max_steps=kwargs.get("steps", 100),
         )
     else:
@@ -95,6 +238,13 @@ def _get_strategy(name: str, **kwargs) -> Any:
 @app.command()
 def run(
     strategy: StrategyOption = "HillClimber",
+    mode: EvalModeOption = "per_action",
+    policy_type: str = typer.Option(
+        "linear",
+        "--policy-type",
+        help="Policy architecture (linear, mlp, invariant_nnet, deepsets, dense)",
+    ),
+    features: FeaturesOption = None,
     n: NOption = 32,
     k: KOption = 4,
     steps: NbIterationsOption = None,
@@ -129,12 +279,20 @@ def run(
     problem = NKLandscape(n=n, k=k, seed=seed)
     group_cfg = GroupConfig(
         n_agents=agents,
-        share_distance=share_info,
-        share_scores=share_info,
+        share_distances=share_info,
+        share_delta_scores=share_info,
         share_ranks=share_info,
-        share_consensus=share_info,
+        share_approachs=share_info,
     )
-    strat = _get_strategy(strategy, steps=steps)
+    strat = _get_strategy(
+        strategy,
+        steps=steps,
+        eval_mode=mode,
+        policy_type=policy_type,
+        features=features,
+        n_actions=n,
+        n_agents=agents,
+    )
     stopping_criteria = StoppingCriteria(
         max_steps=steps,
         max_evaluations=budget,
@@ -213,6 +371,9 @@ def run(
 
 @app.command()
 def benchmark(
+    models: ModelsOption = None,
+    mode: EvalModeOption = "per_action",
+    features: FeaturesOption = None,
     n: NOption = 32,
     k: KOption = 4,
     preset: str = typer.Option(
@@ -224,7 +385,7 @@ def benchmark(
     policy_type: str = typer.Option(
         "invariant_nnet",
         "--policy-type",
-        help="Policy architecture for standard preset ('peer_invariant_per_action', 'invariant_nnet', 'per_action')",
+        help="Policy architecture for standard preset ('peer_invariant_per_action', 'invariant_nnet', 'per_action', 'dense')",
     ),
     ablation_level: str = typer.Option(
         "full",
@@ -252,10 +413,11 @@ def benchmark(
         crit_info.append(f"Max Time: [yellow]{max_time}s[/yellow]")
     crit_str = " | ".join(crit_info) if crit_info else "Steps: [yellow]100[/yellow]"
 
+    suite_desc = f"{len(models)} custom models" if models else f"Preset: [yellow]{preset}[/yellow]"
     console.print(
         Panel.fit(
             f"[bold green]NeuroLS Multi-Strategy Benchmark[/bold green]\n"
-            f"Landscape: [cyan]NK(N={n}, K={k})[/cyan] | Preset: [yellow]{preset}[/yellow] | Restarts: [yellow]{restarts}[/yellow] | {crit_str}\n"
+            f"Landscape: [cyan]NK(N={n}, K={k})[/cyan] | {suite_desc} | Restarts: [yellow]{restarts}[/yellow] | {crit_str}\n"
             f"Pre-train NN: [magenta]{train_nn} ({train_generations} gens)[/magenta] | Agents per group: [magenta]{agents}[/magenta]",
             border_style="green",
         )
@@ -269,9 +431,11 @@ def benchmark(
         max_time_seconds=max_time,
     )
 
-    # Determine strategies based on preset
+    # Determine strategies based on CLI options or preset
     strategies: list[Any] = []
-    if preset in ("per-action", "per_action"):
+    if models:
+        suite = [parse_model_spec(m, i) for i, m in enumerate(models, 1)]
+    elif preset in ("per-action", "per_action"):
         suite = get_study_suite("per-action")
     elif preset in ("architectures", "arch"):
         suite = get_study_suite("architectures")
@@ -284,8 +448,10 @@ def benchmark(
                 name=f"Neural_{policy_type}",
                 model_type="neural",
                 policy_type=policy_type,
+                eval_mode=mode,
+                features=features,
                 ablation_level=FeatureAblationLevel(ablation_level),
-                description=f"Neural {policy_type} policy",
+                description=f"Neural {mode} {policy_type} policy",
             ),
             ModelSpec(name="HillClimber", model_type="classical"),
             ModelSpec(name="FirstImprovement", model_type="classical"),
@@ -302,10 +468,16 @@ def benchmark(
             else:
                 strategies.append(HillClimber())
         else:
-            feat_cfg = FeatureConfig.from_ablation_level(spec.ablation_level, n_agents=agents)
+            if spec.features is not None:
+                feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
+            else:
+                feat_cfg = FeatureConfig.from_ablation_level(
+                    spec.ablation_level, n_agents=agents, mode=spec.eval_mode
+                )
             n_strat = NeuralLocalSearchStrategy(
                 name=spec.name,
                 policy_type=spec.policy_type,  # type: ignore
+                eval_mode=spec.eval_mode,
                 feature_config=feat_cfg,
                 n_actions=n,
                 n_agents=agents,
@@ -393,13 +565,17 @@ def benchmark(
 
 @app.command()
 def train(
+    mode: EvalModeOption = "per_action",
+    policy_type: str = typer.Option(
+        "linear",
+        "--policy-type",
+        help="Policy architecture (linear, mlp, invariant_nnet, deepsets, dense)",
+    ),
+    features: FeaturesOption = None,
     n: NOption = 32,
     k: KOption = 4,
     generations: NbGenerationsOption = 20,
     popsize: PopulationSizeOption = 10,
-    policy_type: str = typer.Option(
-        "linear", "--policy-type", help="Policy architecture (linear, mlp, deepsets)"
-    ),
     eval_restarts: int = typer.Option(
         8, "--eval-restarts", "-r", help="Restarts per evaluation candidate"
     ),
@@ -412,10 +588,12 @@ def train(
     seed: SeedOption = 42,
 ) -> None:
     """Train a Neural Local Search policy using CMA-ES neuroevolution."""
+    feat_desc = f"Features: [yellow]{features}[/yellow]" if features else "Default Features"
     console.print(
         Panel.fit(
             f"[bold magenta]CMA-ES Neuroevolution Training[/bold magenta]\n"
-            f"Policy: [cyan]{policy_type}[/cyan] | Landscape: [green]NK(N={n}, K={k})[/green]\n"
+            f"Mode: [cyan]{mode}[/cyan] | Policy: [cyan]{policy_type}[/cyan] | {feat_desc}\n"
+            f"Landscape: [green]NK(N={n}, K={k})[/green] | Agents: [magenta]{agents}[/magenta]\n"
             f"Generations: [yellow]{generations}[/yellow] | Eval Restarts: [yellow]{eval_restarts}[/yellow] | Eval Steps: [yellow]{eval_steps}[/yellow]",
             border_style="magenta",
         )
@@ -424,7 +602,11 @@ def train(
     problem = NKLandscape(n=n, k=k, seed=seed)
     group_cfg = GroupConfig(n_agents=agents)
     strategy = NeuralLocalSearchStrategy(
+        eval_mode=mode,
         policy_type=policy_type,  # type: ignore
+        features=features,
+        n_actions=n,
+        n_agents=agents,
         max_steps=eval_steps,
         seed=seed,
     )
@@ -696,6 +878,7 @@ def ablation(
 
 @app.command(name="multi-agent-study")
 def multi_agent_study(
+    models: ModelsOption = None,
     n: NOption = 32,
     k: KOption = 4,
     agents: str = typer.Option(
@@ -722,10 +905,11 @@ def multi_agent_study(
         max_evaluations=budget,
         max_time_seconds=max_time,
     )
+    study_desc = f"{len(models)} custom models" if models else f"Preset: [yellow]{preset}[/yellow]"
     console.print(
         Panel.fit(
             f"[bold cyan]NeuroLS Multi-Agent & Multi-Model Comparative Study[/bold cyan]\n"
-            f"Landscape: [green]NK(N={n}, K={k})[/green] | Preset: [yellow]{preset}[/yellow] | Agent Counts: [yellow]{agent_counts}[/yellow]\n"
+            f"Landscape: [green]NK(N={n}, K={k})[/green] | {study_desc} | Agent Counts: [yellow]{agent_counts}[/yellow]\n"
             f"Stopping: [magenta]{stopping}[/magenta] | Train Generations: [magenta]{train_generations}[/magenta] | Restarts: [yellow]{restarts}[/yellow]",
             border_style="cyan",
         )
@@ -733,14 +917,18 @@ def multi_agent_study(
 
     train_problem = NKLandscape(n=n, k=k, seed=seed)
     test_problem = NKLandscape(n=n, k=k, seed=seed + 500)
-    models = get_study_suite(preset)
+
+    if models:
+        study_models = [parse_model_spec(m, i) for i, m in enumerate(models, 1)]
+    else:
+        study_models = get_study_suite(preset)
 
     study = MultiAgentStudy(
         train_problem=train_problem,
         test_problem=test_problem,
         agent_counts=agent_counts,
         sharing_modes=[True],
-        models=None,
+        models=study_models,
         stopping_criteria=stopping,
         train_generations=train_generations,
         test_restarts=restarts,
@@ -811,6 +999,101 @@ def multi_agent_study(
     console.print("  • Multi-Agent Diversity Dynamics   : [cyan]diversity_dynamics.png[/cyan]")
     if (output_dir / "training_curves.png").exists():
         console.print("  • Neuroevolution Training Curves    : [cyan]training_curves.png[/cyan]")
+
+
+@app.command(name="features")
+def features_list() -> None:
+    """List all available neural feature channels, group keywords, and evaluation modes."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]NeuroLS Feature Registry & Evaluation Modes[/bold cyan]\n"
+            "Easily configure precise inputs for per-action scoring or joint full-neighborhood evaluation.",
+            border_style="cyan",
+        )
+    )
+
+    # 1. Action-level features
+    t_action = Table(
+        title="1. Action-Specific Features (Par Action - candidate move j)", border_style="cyan"
+    )
+    t_action.add_column("Feature Key", style="bold yellow")
+    t_action.add_column("Dim (M agents)", justify="center", style="magenta")
+    t_action.add_column("Formula / Meaning", style="green")
+    t_action.add_column("Description", style="white")
+
+    for k, desc in FEATURE_REGISTRY.items():
+        if desc.category == "action" and k not in ("delta_fitness", "current_bit"):
+            dim_str = (
+                "M - 1"
+                if desc.name == "peer_deltas"
+                else ("1 (if M>1)" if desc.is_multi_agent else "1")
+            )
+            t_action.add_row(k, dim_str, desc.formula, desc.description)
+    console.print(t_action)
+    console.print()
+
+    # 2. Agent-level features
+    t_agent = Table(
+        title="2. Agent & Group Features (Valable pour les deux - broadcasted or joint)",
+        border_style="green",
+    )
+    t_agent.add_column("Feature Key", style="bold yellow")
+    t_agent.add_column("Dim (M agents)", justify="center", style="magenta")
+    t_agent.add_column("Formula / Meaning", style="green")
+    t_agent.add_column("Description", style="white")
+
+    for k, desc in FEATURE_REGISTRY.items():
+        if desc.category in ("agent", "context") and k not in ("fitness",):
+            dim_str = (
+                "M - 1"
+                if "peer_" in desc.name or "peer_delta" in desc.name
+                else ("1 (if M>1)" if desc.is_multi_agent else "1")
+            )
+            t_agent.add_row(k, dim_str, desc.formula, desc.description)
+    console.print(t_agent)
+    console.print()
+
+    # 3. Group keywords
+    t_groups = Table(
+        title="3. Feature Group Keywords (Combine with '@' in CLI)", border_style="magenta"
+    )
+    t_groups.add_column("Keyword", style="bold yellow")
+    t_groups.add_column("Included Features", style="cyan")
+
+    for grp_name, feats in FEATURE_GROUPS.items():
+        t_groups.add_row(f"@{grp_name}", ", ".join(feats))
+    console.print(t_groups)
+    console.print()
+
+    # 4. Evaluation modes
+    t_modes = Table(
+        title="4. Evaluation Modes: 'per_action' vs 'all_actions'", border_style="yellow"
+    )
+    t_modes.add_column("Mode", style="bold cyan")
+    t_modes.add_column("Description", style="white")
+    t_modes.add_column("Compatible Policies", style="green")
+
+    t_modes.add_row(
+        "per_action",
+        "Evaluates candidate moves individually. Model scores move j based on action features + agent context, then takes argmax.",
+        "linear, mlp (per_action), peer_invariant_per_action",
+    )
+    t_modes.add_row(
+        "all_actions",
+        "Evaluates the entire neighborhood at once. Receives full neighborhood information in one go.",
+        "invariant_nnet, deepsets, dense (dense_neighborhood)",
+    )
+    console.print(t_modes)
+
+    console.print(
+        "\n[bold]CLI Usage Examples:[/bold]\n"
+        "  • Single run with custom features:\n"
+        "      [cyan]neurols run --strategy neural --mode per_action --features '@action_basic,peer_deltas,best_locus' -m 4[/cyan]\n"
+        "  • Compare multiple models in benchmark:\n"
+        "      [cyan]neurols benchmark --model 'name=M1,mode=per_action,features=@action_basic' \\\n"
+        "                        --model 'name=M2,mode=per_action,features=@action_basic,peer_deltas,best_locus' \\\n"
+        "                        --model 'name=M3,mode=all_actions,policy=dense,features=@action_basic' -m 4[/cyan]\n"
+    )
 
 
 def main() -> None:

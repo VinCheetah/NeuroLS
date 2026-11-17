@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from neurols.core.group import GroupContext, GroupMetrics
 from neurols.strategies.base import BaseStrategy
 from neurols.strategies.neural.features import (
+    EvaluationMode,
     FeatureAblationLevel,
     FeatureConfig,
     FeatureExtractor,
@@ -22,7 +23,7 @@ from neurols.strategies.neural.features import (
 from neurols.strategies.neural.policy import (
     BaseNeuralPolicy,
     DeepSetsPolicy,
-    EquivariantMLPPolicy,
+    DenseNeighborhoodPolicy,
     InvariantNNet,
     LinearScorer,
     PeerInvariantActionScorer,
@@ -35,13 +36,13 @@ class NeuralLocalSearchStrategy(BaseStrategy):
     """Local Search strategy driven by a neural network policy.
 
     Supports:
-    - Individual Action Scoring (PerActionScorer): scores each candidate action
-      independently using its action-level features (delta, sorted peer changes, etc.)
-      and takes the argmax.
-    - All-Actions Permutation-Equivariant Scoring (InvariantNNet): processes all N
-      actions simultaneously with DeepSets remix/rescale layers.
-    - Feature Ablation: easily configure more or fewer features (delta only, ranked delta,
-      peer distance deltas, group rank, full context) to analyze feature importance.
+    - Individual Action Scoring (eval_mode='per_action'): scores each candidate action
+      independently using its action-level features and group context, then chooses a move.
+    - All-Actions Evaluation (eval_mode='all_actions'): processes all N actions
+      simultaneously, either via permutation-equivariant DeepSets architectures
+      (InvariantNNet, DeepSetsPolicy) or full-neighborhood dense networks (DenseNeighborhoodPolicy).
+    - Modular Feature Specification: specify exact feature channels or group keywords
+      ('@action_basic', '@scores', '@distances', '@group', '@all').
     """
 
     def __init__(
@@ -54,7 +55,11 @@ class NeuralLocalSearchStrategy(BaseStrategy):
             "invariant_nnet",
             "per_action",
             "peer_invariant_per_action",
+            "dense",
+            "dense_neighborhood",
         ] = "linear",
+        eval_mode: EvaluationMode | str = EvaluationMode.PER_ACTION,
+        features: str | list[str] | None = None,
         ablation_level: FeatureAblationLevel | str = FeatureAblationLevel.FULL,
         feature_config: FeatureConfig | None = None,
         selection_mode: MoveSelectionMode | str = MoveSelectionMode.ARGMAX,
@@ -71,14 +76,19 @@ class NeuralLocalSearchStrategy(BaseStrategy):
         seed: SeedType = None,
         name: str | None = None,
     ) -> None:
-        strategy_name = name or f"Neural_{policy_type}_{ablation_level}"
+        self.eval_mode = EvaluationMode(eval_mode)
+        strategy_name = name or f"Neural_{self.eval_mode.value}_{policy_type}"
         super().__init__(
             name=strategy_name,
             state_dependent_deterministic=state_dependent_deterministic,
             seed=seed,
         )
         self.policy_type = policy_type
-        self.ablation_level = FeatureAblationLevel(ablation_level)
+        self.ablation_level = (
+            FeatureAblationLevel(ablation_level)
+            if isinstance(ablation_level, (FeatureAblationLevel, str))
+            else FeatureAblationLevel.FULL
+        )
         self.n_actions = n_actions
         self.n_agents = n_agents
         self.remix = remix
@@ -86,10 +96,16 @@ class NeuralLocalSearchStrategy(BaseStrategy):
 
         if feature_config is not None:
             self.feature_config = feature_config
+        elif features is not None:
+            self.feature_config = FeatureConfig.from_specs(
+                spec=features,
+                mode=self.eval_mode,
+            )
         else:
             self.feature_config = FeatureConfig.from_ablation_level(
                 level=self.ablation_level,
                 n_agents=self.n_agents,
+                mode=self.eval_mode,
             )
 
         self.extractor = FeatureExtractor(self.feature_config, n_agents=self.n_agents)
@@ -105,8 +121,11 @@ class NeuralLocalSearchStrategy(BaseStrategy):
             num_feats = self.feature_config.get_num_features(self.n_agents)
             if policy_type == "linear":
                 self.policy = LinearScorer(num_feats)
-            elif policy_type == "mlp":
-                self.policy = EquivariantMLPPolicy(num_feats, hidden_dim=hidden_dim)
+            elif policy_type in ("mlp", "per_action"):
+                self.policy = PerActionScorer(
+                    num_features=num_feats,
+                    hidden_layers=hidden_layers,
+                )
             elif policy_type == "deepsets":
                 self.policy = DeepSetsPolicy(num_feats, hidden_dim=hidden_dim)
             elif policy_type == "invariant_nnet":
@@ -117,16 +136,17 @@ class NeuralLocalSearchStrategy(BaseStrategy):
                     remix=self.remix,
                     rescale=self.rescale,
                 )
-            elif policy_type == "per_action":
-                self.policy = PerActionScorer(
-                    num_features=num_feats,
-                    hidden_layers=hidden_layers,
-                )
             elif policy_type == "peer_invariant_per_action":
                 self.policy = PeerInvariantActionScorer(
                     num_base_features=1,
                     n_agents=self.n_agents,
                     peer_feature_dim=1,
+                    hidden_dim=hidden_dim,
+                )
+            elif policy_type in ("dense", "dense_neighborhood"):
+                self.policy = DenseNeighborhoodPolicy(
+                    n_actions=self.n_actions,
+                    num_features=num_feats,
                     hidden_dim=hidden_dim,
                 )
             else:
@@ -183,7 +203,9 @@ class NeuralLocalSearchStrategy(BaseStrategy):
     @property
     def hyperparameters(self) -> dict[str, Any]:
         return {
+            "eval_mode": self.eval_mode.value,
             "policy_type": self.policy_type,
+            "features": self.feature_config.features,
             "ablation_level": self.ablation_level.value,
             "temperature": self.temperature,
             "selection_mode": self.selection_mode.value,

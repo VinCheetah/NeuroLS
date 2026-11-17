@@ -376,3 +376,36 @@ class DeepSetsPolicy(BaseNeuralPolicy):
         g = h.mean(dim=1, keepdim=True).expand(B, N, self.hidden_dim)
         combined = torch.cat([h, g], dim=-1)
         return self.decoder(combined).squeeze(-1)
+
+
+class DenseNeighborhoodPolicy(BaseNeuralPolicy):
+    """Dense all-actions joint neighborhood policy.
+
+    Flattens all N actions' features into a single vector of size N * num_features,
+    evaluates the entire neighborhood simultaneously through an MLP, and directly
+    outputs logits for all N actions in a single forward pass.
+    """
+
+    def __init__(
+        self,
+        n_actions: int,
+        num_features: int,
+        hidden_dim: int = 32,
+    ) -> None:
+        super().__init__()
+        self.n_actions = n_actions
+        self.num_features = num_features
+        in_dim = n_actions * num_features
+
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, n_actions),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        B, N, F = features.shape
+        flat = features.float().reshape(B, N * F)
+        return self.net(flat)

@@ -6,6 +6,7 @@ All architectures, meta-modules, and scorers are unified in `neurols.strategies.
 from neurols.strategies.neural.policy import (
     BaseNeuralPolicy,
     DeepSetsPolicy,
+    DenseNeighborhoodPolicy,
     EquivariantMLPPolicy,
     InvariantModule,
     InvariantNNet,
@@ -25,4 +26,5 @@ __all__ = [
     "LinearScorer",
     "EquivariantMLPPolicy",
     "DeepSetsPolicy",
+    "DenseNeighborhoodPolicy",
 ]

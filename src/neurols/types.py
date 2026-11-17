@@ -52,6 +52,75 @@ class AnnealingSchedule(StrEnum):
     COSINE = "cosine"
 
 
+class TerminationReason(StrEnum):
+    """Reason for search trajectory termination."""
+
+    MAX_STEPS = "max_steps"
+    EVALUATION_BUDGET = "evaluation_budget"
+    TIME_LIMIT = "time_limit"
+    TARGET_FITNESS = "target_fitness"
+    STAGNATION = "stagnation"
+    LOCAL_OPTIMUM = "local_optimum"
+    STRATEGY_STOP = "strategy_stop"
+
+
+@dataclass
+class StoppingCriteria:
+    """Configurable termination criteria for Local Search.
+
+    Supports combinations of step limits, evaluation budgets, wall-clock time,
+    target fitness thresholds, and stagnation limits.
+    Stops as soon as ANY active criterion is satisfied (OR logic).
+
+    Attributes:
+        max_steps: Maximum iterations/steps (t).
+        max_evaluations: Maximum function / neighborhood evaluation count.
+        max_time_seconds: Maximum wall-clock time in seconds.
+        target_fitness: Stop early if best fitness reaches this threshold.
+        max_stagnation_steps: Stop early if no improvement for K steps.
+    """
+
+    max_steps: int | None = None
+    max_evaluations: int | None = None
+    max_time_seconds: float | None = None
+    target_fitness: float | None = None
+    max_stagnation_steps: int | None = None
+    
+    def __post_init__(self) -> None:
+        if not any(
+            [
+                self.max_steps,
+                self.max_evaluations,
+                self.max_time_seconds,
+                self.target_fitness,
+                self.max_stagnation_steps,
+            ]
+        ):
+            self.max_steps = 100
+            print("Warning: No stopping criteria specified. Defaulting to max_steps=100.")
+
+    def check(
+        self,
+        step: int,
+        evaluations: int,
+        elapsed_seconds: float,
+        best_fitness: float,
+        stagnation_steps: int,
+    ) -> tuple[bool, TerminationReason | None]:
+        """Check if any stopping condition is met."""
+        if self.max_steps is not None and step >= self.max_steps:
+            return True, TerminationReason.MAX_STEPS
+        if self.max_evaluations is not None and evaluations >= self.max_evaluations:
+            return True, TerminationReason.EVALUATION_BUDGET
+        if self.max_time_seconds is not None and elapsed_seconds >= self.max_time_seconds:
+            return True, TerminationReason.TIME_LIMIT
+        if self.target_fitness is not None and best_fitness >= self.target_fitness:
+            return True, TerminationReason.TARGET_FITNESS
+        if self.max_stagnation_steps is not None and stagnation_steps >= self.max_stagnation_steps:
+            return True, TerminationReason.STAGNATION
+        return False, None
+
+
 class Device(StrEnum):
     """Computation device types."""
 

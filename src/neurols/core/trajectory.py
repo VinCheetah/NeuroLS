@@ -43,6 +43,9 @@ class Trajectory:
     final_fitness: torch.Tensor
     best_fitness: torch.Tensor
     steps_taken: torch.Tensor
+    termination_reason: str = "max_steps"
+    total_evaluations: int = 0
+    elapsed_seconds: float = 0.0
     step_history: list[StepRecord] = field(default_factory=list[StepRecord])
     mean_fitness_history: list[float] = field(default_factory=list[float])
     best_fitness_history: list[float] = field(default_factory=list[float])
@@ -64,7 +67,7 @@ class Trajectory:
         """Average of each agent's best-so-far fitness."""
         return float(self.best_fitness.mean().item())
 
-    def get_summary(self) -> dict[str, float]:
+    def get_summary(self) -> dict[str, Any]:
         """Compute key summary statistics."""
         best_arr = self.best_fitness.detach().cpu().numpy()
         steps_arr = self.steps_taken.detach().cpu().numpy()
@@ -75,4 +78,7 @@ class Trajectory:
             "min_best_fitness": float(np.min(best_arr)),
             "median_best_fitness": float(np.median(best_arr)),
             "mean_steps": float(np.mean(steps_arr)),
+            "termination_reason": self.termination_reason,
+            "total_evaluations": self.total_evaluations,
+            "elapsed_seconds": self.elapsed_seconds,
         }

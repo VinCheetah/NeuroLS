@@ -203,6 +203,81 @@ class PerActionScorer(BaseNeuralPolicy):
         self.net.reset_parameters()
 
 
+class PeerInvariantActionScorer(BaseNeuralPolicy):
+    """Scores candidate actions using an InvariantModule / DeepSets layer over peer features.
+
+    For each candidate action j in {0, ..., N-1}:
+    - Action features are partitioned into:
+        1. Base action features (e.g. delta fitness, ranked delta, current bit)
+        2. Peer features (e.g. distance changes +/-1 to each of the M - 1 peers)
+    - The M - 1 peer tokens are passed through an InvariantModule (mixing individual
+      peer deltas and the group mean delta) and pooled.
+    - The pooled group context is merged with the base action features to produce
+      the final score for action j.
+
+    Guarantees strict permutation-invariance over the peers in the group!
+    When M=1 (solo agent), peer processing is skipped and scoring relies purely on base features.
+    """
+
+    def __init__(
+        self,
+        num_base_features: int = 1,
+        n_agents: int = 1,
+        peer_feature_dim: int = 1,
+        hidden_dim: int = 16,
+    ) -> None:
+        super().__init__()
+        self.num_base_features = num_base_features
+        self.n_agents = n_agents
+        self.n_peers = max(n_agents - 1, 0)
+        self.peer_feature_dim = peer_feature_dim
+        self.hidden_dim = hidden_dim
+
+        if self.n_peers > 0:
+            InvLinear = InvariantModule(
+                nn.Linear, n_elements=self.n_peers, remix=True, rescale=True
+            )
+            self.peer_layer = InvLinear(peer_feature_dim, hidden_dim)
+            self.peer_act = nn.Tanh()
+            head_in_dim = num_base_features + hidden_dim
+        else:
+            self.peer_layer = None
+            self.peer_act = None
+            head_in_dim = num_base_features
+
+        self.head = nn.Sequential(
+            nn.Linear(head_in_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        B, N, F = features.shape
+
+        if self.n_peers > 0 and F >= self.num_base_features + self.n_peers:
+            base_feats = features[:, :, : self.num_base_features]
+            peer_feats = features[
+                :, :, self.num_base_features : self.num_base_features + self.n_peers
+            ]
+            peer_tokens = peer_feats.reshape(B * N, self.n_peers, 1)
+            h_peers = self.peer_act(self.peer_layer(peer_tokens))
+            pooled_peers = h_peers.mean(dim=1).view(B, N, self.hidden_dim)
+            combined = torch.cat([base_feats, pooled_peers], dim=-1)
+            scores = self.head(combined).squeeze(-1)
+        else:
+            base_feats = features[:, :, : self.num_base_features]
+            scores = self.head(base_feats).squeeze(-1)
+
+        return scores
+
+    def reset_parameters(self) -> None:
+        if self.peer_layer is not None and hasattr(self.peer_layer, "reset_parameters"):
+            self.peer_layer.reset_parameters()
+        for layer in self.head:
+            if hasattr(layer, "reset_parameters"):
+                layer.reset_parameters()
+
+
 # ============================================================================
 # Paradigm 2: All-Actions Scorers (Full-Neighborhood Joint Evaluation)
 # ============================================================================

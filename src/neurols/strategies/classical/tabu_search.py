@@ -24,7 +24,7 @@ class TabuSearch(BaseStrategy):
 
     def __init__(
         self,
-        tenure: int = 5,
+        tenure: int = 8,
         aspiration: bool = True,
         name: str = "TabuSearch",
     ) -> None:

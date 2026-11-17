@@ -56,6 +56,16 @@ class BaseStrategy(ABC):
         pass
 
     @property
+    def uses_group_information(self) -> bool:
+        """Whether this strategy actively uses group context/metrics in decision making.
+
+        Classical single-agent heuristics (HillClimber, FirstImprovement, TabuSearch,
+        SimulatedAnnealing, RandomWalk) ignore group context and return False.
+        Strategies returning False behave identically regardless of information sharing flags.
+        """
+        return False
+
+    @property
     @abstractmethod
     def hyperparameter_specs(self) -> list[HyperparameterSpec]:
         """Specification of strategy hyperparameters for tuning and reflection."""

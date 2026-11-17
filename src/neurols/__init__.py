@@ -20,9 +20,17 @@ from neurols.analysis.metrics import (
     compute_time_to_target,
     summarize_trajectory,
 )
+from neurols.analysis.multi_agent_study import (
+    DEFAULT_MULTIAGENT_MODELS,
+    ModelSpec,
+    MultiAgentRunRecord,
+    MultiAgentStudy,
+    MultiAgentStudyResult,
+)
 from neurols.analysis.plotting import (
     plot_convergence_curves,
     plot_final_fitness_boxplots,
+    plot_fitness_vs_agents,
     plot_multiagent_diversity,
     plot_neural_feature_importance,
     plot_training_convergence,
@@ -54,6 +62,7 @@ from neurols.strategies.neural import (
     LinearScorer,
     Net,
     NeuralLocalSearchStrategy,
+    PeerInvariantActionScorer,
     PerActionScorer,
     compute_action_peer_deltas,
     compute_normalized_ranks,
@@ -70,6 +79,8 @@ from neurols.types import (
     NeighborhoodType,
     ProblemType,
     StepRecord,
+    StoppingCriteria,
+    TerminationReason,
 )
 
 __version__ = "0.1.0"
@@ -93,6 +104,8 @@ __all__ = [
     "StepRecord",
     "MoveResult",
     "DeviceType",
+    "StoppingCriteria",
+    "TerminationReason",
     # Strategies
     "BaseStrategy",
     "HillClimber",
@@ -120,6 +133,7 @@ __all__ = [
     "InvariantModule",
     "InvariantNNet",
     "PerActionScorer",
+    "PeerInvariantActionScorer",
     "MoveSelectionMode",
     # Training & Neuroevolution
     "BaseOptimizer",
@@ -129,6 +143,11 @@ __all__ = [
     "AblationStudy",
     "AblationStrategySpec",
     "DEFAULT_ABLATION_SUITE",
+    "MultiAgentStudy",
+    "MultiAgentStudyResult",
+    "ModelSpec",
+    "DEFAULT_MULTIAGENT_MODELS",
+    "MultiAgentRunRecord",
     # Analysis & Plotting
     "ExperimentLogger",
     "ComparisonResult",
@@ -138,6 +157,7 @@ __all__ = [
     "compute_time_to_target",
     "plot_convergence_curves",
     "plot_final_fitness_boxplots",
+    "plot_fitness_vs_agents",
     "plot_multiagent_diversity",
     "plot_training_convergence",
     "plot_neural_feature_importance",

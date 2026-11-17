@@ -11,6 +11,7 @@ from neurols.strategies.neural.policy import (
     InvariantNNet,
     LinearScorer,
     Net,
+    PeerInvariantActionScorer,
     PerActionScorer,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "InvariantModule",
     "InvariantNNet",
     "PerActionScorer",
+    "PeerInvariantActionScorer",
     "LinearScorer",
     "EquivariantMLPPolicy",
     "DeepSetsPolicy",

@@ -14,6 +14,7 @@ from neurols.core.problem import BatchedProblem
 from neurols.core.runner import BatchedRunner
 from neurols.core.trajectory import Trajectory
 from neurols.strategies.base import BaseStrategy
+from neurols.types import StoppingCriteria
 
 
 @dataclass
@@ -68,13 +69,16 @@ class ExperimentLogger:
         problem: BatchedProblem,
         strategies: list[BaseStrategy],
         n_restarts: int = 16,
-        max_steps: int = 100,
+        max_steps: int | None = 100,
+        stopping_criteria: StoppingCriteria | None = None,
         group_config: GroupConfig | None = None,
         seed: int = 42,
     ) -> ComparisonResult:
         """Execute a controlled comparison across multiple local search strategies."""
         trajectories: dict[str, Trajectory] = {}
         summary_rows: list[dict[str, Any]] = []
+
+        stopping = stopping_criteria or StoppingCriteria(max_steps=max_steps)
 
         # Fix starting states across all strategies for fair evaluation
         B = n_restarts * (group_config.n_agents if group_config else 1)
@@ -87,7 +91,7 @@ class ExperimentLogger:
             runner = BatchedRunner(
                 problem=problem,
                 strategy=strat,
-                max_steps=max_steps,
+                stopping_criteria=stopping,
                 group_config=group_config,
                 record_history=True,
             )

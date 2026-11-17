@@ -14,7 +14,6 @@ import torch.nn.functional as F
 
 from neurols.core.group import GroupContext, GroupMetrics
 from neurols.strategies.base import BaseStrategy
-from neurols.strategies.neural.architectures import InvariantNNet, PerActionScorer
 from neurols.strategies.neural.features import (
     FeatureAblationLevel,
     FeatureConfig,
@@ -24,7 +23,10 @@ from neurols.strategies.neural.policy import (
     BaseNeuralPolicy,
     DeepSetsPolicy,
     EquivariantMLPPolicy,
+    InvariantNNet,
     LinearScorer,
+    PeerInvariantActionScorer,
+    PerActionScorer,
 )
 from neurols.types import HyperparameterSpec, MoveResult, MoveSelectionMode, SeedType
 
@@ -46,7 +48,12 @@ class NeuralLocalSearchStrategy(BaseStrategy):
         self,
         policy: BaseNeuralPolicy | None = None,
         policy_type: Literal[
-            "linear", "mlp", "deepsets", "invariant_nnet", "per_action"
+            "linear",
+            "mlp",
+            "deepsets",
+            "invariant_nnet",
+            "per_action",
+            "peer_invariant_per_action",
         ] = "linear",
         ablation_level: FeatureAblationLevel | str = FeatureAblationLevel.FULL,
         feature_config: FeatureConfig | None = None,
@@ -58,7 +65,7 @@ class NeuralLocalSearchStrategy(BaseStrategy):
         remix: bool = True,
         rescale: bool = False,
         temperature: float = 1.0,
-        max_steps: int = 500,
+        max_steps: int | None = 500,
         stop_at_local_optimum: bool = False,
         state_dependent_deterministic: bool = False,
         seed: SeedType = None,
@@ -115,6 +122,13 @@ class NeuralLocalSearchStrategy(BaseStrategy):
                     num_features=num_feats,
                     hidden_layers=hidden_layers,
                 )
+            elif policy_type == "peer_invariant_per_action":
+                self.policy = PeerInvariantActionScorer(
+                    num_base_features=1,
+                    n_agents=self.n_agents,
+                    peer_feature_dim=1,
+                    hidden_dim=hidden_dim,
+                )
             else:
                 raise ValueError(f"Unknown policy_type: {policy_type}")
 
@@ -125,6 +139,19 @@ class NeuralLocalSearchStrategy(BaseStrategy):
     @property
     def is_deterministic(self) -> bool:
         return self.selection_mode == MoveSelectionMode.ARGMAX or self.state_dependent_deterministic
+
+    @property
+    def uses_group_information(self) -> bool:
+        """Whether this neural strategy takes peer or group features as inputs."""
+        if self.n_agents <= 1:
+            return False
+        cfg = self.feature_config
+        return bool(
+            cfg.use_action_peer_deltas
+            or cfg.use_net_peer_delta
+            or cfg.use_group_scores
+            or cfg.use_group_distances
+        )
 
     @property
     def hyperparameter_specs(self) -> list[HyperparameterSpec]:
@@ -215,7 +242,7 @@ class NeuralLocalSearchStrategy(BaseStrategy):
             group_ctx=group_context,
             group_metrics=group_metrics,
             step=step,
-            max_steps=self.max_steps,
+            max_steps=self.max_steps if self.max_steps is not None else 0,
             stagnation_counter=self._stagnation_counter,
         )
 

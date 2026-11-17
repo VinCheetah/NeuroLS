@@ -16,7 +16,7 @@ from neurols.core.group import GroupConfig, GroupContext
 from neurols.core.problem import BatchedProblem
 from neurols.core.trajectory import Trajectory
 from neurols.strategies.base import BaseStrategy
-from neurols.types import DeviceType, SeedType, StepRecord
+from neurols.types import DeviceType, SeedType, StepRecord, StoppingCriteria, TerminationReason
 
 
 class BatchedRunner:
@@ -26,13 +26,15 @@ class BatchedRunner:
     - Multiple problem instances (MultiNKLandscape or single instance)
     - Multiple independent restarts (different initial search states)
     - Multi-agent groups (groups of M agents sharing context on each instance & restart)
+    - Precise and combinable stopping conditions (steps, time, evaluations/budget, stagnation).
     """
 
     def __init__(
         self,
         problem: BatchedProblem,
         strategy: BaseStrategy,
-        max_steps: int = 200,
+        max_steps: int | None = None,
+        stopping_criteria: StoppingCriteria | None = None,
         group_config: GroupConfig | None = None,
         record_history: bool = True,
         device: DeviceType = "cpu",
@@ -40,7 +42,19 @@ class BatchedRunner:
         self.device = torch.device(device)
         self.problem = problem.to(self.device)
         self.strategy = strategy
-        self.max_steps = max_steps
+
+        if stopping_criteria is not None:
+            self.stopping_criteria = stopping_criteria
+        elif max_steps is not None:
+            self.stopping_criteria = StoppingCriteria(max_steps=max_steps)
+        else:
+            self.stopping_criteria = StoppingCriteria(max_steps=200)
+
+        self.max_steps = (
+            self.stopping_criteria.max_steps
+            if self.stopping_criteria.max_steps is not None
+            else 1000000
+        )
         self.group_config = group_config or GroupConfig(n_agents=1)
         self.record_history = record_history
 
@@ -125,9 +139,38 @@ class BatchedRunner:
         initial_states_saved = states.clone()
         initial_fitness_saved = current_fitness.clone()
 
+        total_evaluations = total_batch_size
+        stagnation_steps = 0
+        prev_best_overall = float(best_fitness.max().item())
+        termination_reason: str = TerminationReason.MAX_STEPS.value
+
         # 4. Local Search Iteration Loop
         for step in range(self.max_steps):
+            elapsed = time.perf_counter() - start_time
+            best_fit = float(best_fitness.max().item())
+            mean_fit = float(current_fitness.mean().item())
+
+            # Check stagnation
+            if best_fit > prev_best_overall + 1e-6:
+                stagnation_steps = 0
+                prev_best_overall = best_fit
+            else:
+                stagnation_steps += 1
+
+            # Check combined stopping criteria
+            should_stop, stop_reason = self.stopping_criteria.check(
+                step=step,
+                evaluations=total_evaluations,
+                elapsed_seconds=elapsed,
+                best_fitness=best_fit,
+                stagnation_steps=stagnation_steps,
+            )
+            if should_stop and stop_reason is not None:
+                termination_reason = stop_reason.value
+                break
+
             if not active_mask.any():
+                termination_reason = TerminationReason.LOCAL_OPTIMUM.value
                 break
 
             # Compute group metrics
@@ -139,8 +182,9 @@ class BatchedRunner:
             )
             diversity_history.append(group_metrics.group_diversity)
 
-            # Compute neighborhood deltas
+            # Compute neighborhood deltas (N evaluations per active batch member)
             deltas = self.problem.get_neighborhood_deltas(states)  # (B, N)
+            total_evaluations += total_batch_size * N
 
             # Strategy selects move
             move_res = self.strategy.select_move(
@@ -168,6 +212,7 @@ class BatchedRunner:
 
                 # Re-evaluate fitness
                 new_fitness = self.problem.evaluate(states)
+                total_evaluations += int(valid_moves.sum().item())
                 current_fitness = torch.where(valid_moves, new_fitness, current_fitness)
 
                 # Update best so far
@@ -214,6 +259,9 @@ class BatchedRunner:
             final_fitness=current_fitness,
             best_fitness=best_fitness,
             steps_taken=steps_taken,
+            termination_reason=termination_reason,
+            total_evaluations=total_evaluations,
+            elapsed_seconds=elapsed,
             step_history=step_records,
             mean_fitness_history=mean_fit_history,
             best_fitness_history=best_fit_history,
@@ -240,16 +288,20 @@ class TraditionalRunner:
         self,
         problem: BatchedProblem,
         strategy: BaseStrategy,
+        stopping_criteria: StoppingCriteria | None = None,
         device: DeviceType = "cpu",
     ) -> None:
         self.problem = problem.to(torch.device(device))
         self.strategy = strategy
         self.device = torch.device(device)
+        self.stopping_criteria = stopping_criteria or StoppingCriteria(max_steps=200)
         self.state: torch.Tensor | None = None
         self.fitness: float = 0.0
         self.best_fitness: float = 0.0
         self.best_state: torch.Tensor | None = None
         self.step_idx: int = 0
+        self.total_evaluations: int = 0
+        self.start_time: float = 0.0
 
     def reset(self, initial_state: torch.Tensor | None = None, seed: SeedType = None) -> float:
         """Reset runner to initial state."""

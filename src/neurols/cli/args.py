@@ -40,6 +40,8 @@ LiveOption = Annotated[
 NOption = Annotated[
     int,
     typer.Option(
+        "--n",
+        "-n",
         "--N",
         "-N",
         help="The number of loci in the NK landscape.",
@@ -50,6 +52,8 @@ NOption = Annotated[
 KOption = Annotated[
     int,
     typer.Option(
+        "--k",
+        "-k",
         "--K",
         "-K",
         help="The number of interactions in the NK landscape.",
@@ -86,6 +90,7 @@ NbInstancesOption = Annotated[
 NbRestartsOption = Annotated[
     int,
     typer.Option(
+        "--restarts",
         "--nb-restarts",
         "-r",
         help="The number of restarts per instance.",
@@ -97,6 +102,7 @@ PopulationSizeOption = Annotated[
     int,
     typer.Option(
         "--population-size",
+        "--popsize",
         "-p",
         help="Number of agents per population (1 for a single agent).",
         min=1,
@@ -106,6 +112,7 @@ PopulationSizeOption = Annotated[
 NbAgentsOption = Annotated[
     int,
     typer.Option(
+        "--agents",
         "--nb-agents",
         "-m",
         help="Number of agents per group (1 for a single agent).",
@@ -166,6 +173,7 @@ OutputDirOption = Annotated[
     Path,
     typer.Option(
         "--output-dir",
+        "--out",
         "-o",
         help="The output directory.",
     ),
@@ -173,31 +181,33 @@ OutputDirOption = Annotated[
 ]
 
 NbIterationsOption = Annotated[
-    int,
+    int | None,
     typer.Option(
         "--nb-iterations",
+        "--steps",
         "-t",
-        help="The number of iterations per restart.",
+        help="The maximum number of iterations / steps.",
         min=1,
     ),
 ]
 
 NbBudgetOption = Annotated[
-    int,
+    int | None,
     typer.Option(
         "--nb-budget",
+        "--budget",
         "-b",
-        help="The budget for the experiment.",
+        help="Maximum function / evaluation budget.",
         min=1,
     ),
 ]
 
 NbTimeOption = Annotated[
-    int,
+    float | None,
     typer.Option(
         "--nb-time",
         "--time",
-        help="The time limit for the experiment.",
-        min=1,
+        help="Maximum wall-clock time limit in seconds.",
+        min=0.01,
     ),
 ]

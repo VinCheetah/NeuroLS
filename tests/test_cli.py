@@ -42,6 +42,31 @@ def test_cli_run() -> None:
     assert "Mean Best Fitness" in result.output
 
 
+def test_cli_run_with_budget_and_time() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--strategy",
+            "HillClimber",
+            "-n",
+            "10",
+            "-k",
+            "1",
+            "--budget",
+            "150",
+            "--time",
+            "5.0",
+            "--restarts",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Execution Summary" in result.output
+    assert "Termination Reason" in result.output
+    assert "Total Evaluations" in result.output
+
+
 def test_cli_benchmark(tmp_path) -> None:
     out_dir = str(tmp_path / "bench")
     result = runner.invoke(
@@ -90,3 +115,59 @@ def test_cli_inspect_nn(tmp_path) -> None:
     assert result.exit_code == 0
     assert "Policy Input Feature Saliency" in result.output
     assert "Sample Decision Analysis" in result.output
+
+
+def test_cli_multi_agent_study(tmp_path) -> None:
+    out_dir = str(tmp_path / "ma_study")
+    result = runner.invoke(
+        app,
+        [
+            "multi-agent-study",
+            "-n",
+            "8",
+            "-k",
+            "1",
+            "--agents",
+            "1,2",
+            "--steps",
+            "4",
+            "--budget",
+            "200",
+            "-g",
+            "1",
+            "-r",
+            "2",
+            "--out",
+            out_dir,
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Multi-Agent Study Leaderboard" in result.output
+    assert "study_results.json" in str(list(tmp_path.glob("**/*")))
+
+
+def test_cli_benchmark_per_action(tmp_path) -> None:
+    out_dir = str(tmp_path / "bench_pa")
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "-n",
+            "8",
+            "-k",
+            "1",
+            "--preset",
+            "per-action",
+            "--steps",
+            "5",
+            "--restarts",
+            "2",
+            "-g",
+            "1",
+            "--out",
+            out_dir,
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Benchmark Results" in result.output
+    assert (tmp_path / "bench_pa" / "benchmark_dashboard.png").exists()

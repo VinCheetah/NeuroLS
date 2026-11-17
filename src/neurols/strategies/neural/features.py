@@ -87,10 +87,16 @@ def compute_action_peer_deltas(
     B, N = states.shape
     device = states.device
 
-    if group_ctx is None or group_ctx.n_agents <= 1:
-        # Solo agent: trivial zero change
-        zeros = torch.zeros((B, N, 1), device=device, dtype=torch.float32)
-        return zeros, zeros
+    if (
+        group_ctx is None
+        or group_ctx.n_agents <= 1
+        or (group_ctx.config is not None and not group_ctx.config.share_distance)
+    ):
+        # Solo agent or sharing disabled: return neutral zero change
+        n_peers = max(group_ctx.n_agents - 1 if group_ctx is not None else 1, 1)
+        zeros_peers = torch.zeros((B, N, n_peers), device=device, dtype=torch.float32)
+        zeros_net = torch.zeros((B, N, 1), device=device, dtype=torch.float32)
+        return zeros_peers, zeros_net
 
     G = group_ctx.n_groups
     M = group_ctx.n_agents
@@ -143,7 +149,6 @@ class FeatureConfig:
         use_ranked_deltas: Include dual-pole normalized rank of delta_f(x, j).
         use_action_peer_deltas: Include (+/-1) distance changes to each peer.
         use_net_peer_delta: Include mean distance change across peers.
-        use_current_bit: Include current bit value x_j.
         use_group_scores: Include agent rank and fitness gap to group best.
         use_group_distances: Include mean and min peer Hamming distances.
         use_trajectory_context: Include step fraction, fitness gap, stagnation counter.
@@ -155,7 +160,6 @@ class FeatureConfig:
     use_ranked_deltas: bool = False
     use_action_peer_deltas: bool = True
     use_net_peer_delta: bool = True
-    use_current_bit: bool = True
     use_group_scores: bool = True
     use_group_distances: bool = True
     use_trajectory_context: bool = True
@@ -176,7 +180,6 @@ class FeatureConfig:
                 use_ranked_deltas=False,
                 use_action_peer_deltas=False,
                 use_net_peer_delta=False,
-                use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
                 use_trajectory_context=False,
@@ -188,7 +191,6 @@ class FeatureConfig:
                 use_ranked_deltas=True,
                 use_action_peer_deltas=False,
                 use_net_peer_delta=False,
-                use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
                 use_trajectory_context=False,
@@ -200,7 +202,6 @@ class FeatureConfig:
                 use_ranked_deltas=False,
                 use_action_peer_deltas=n_agents > 1,
                 use_net_peer_delta=n_agents > 1,
-                use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
                 use_trajectory_context=False,
@@ -212,7 +213,6 @@ class FeatureConfig:
                 use_ranked_deltas=True,
                 use_action_peer_deltas=n_agents > 1,
                 use_net_peer_delta=n_agents > 1,
-                use_current_bit=False,
                 use_group_scores=n_agents > 1,
                 use_group_distances=n_agents > 1,
                 use_trajectory_context=False,
@@ -224,7 +224,6 @@ class FeatureConfig:
                 use_ranked_deltas=True,
                 use_action_peer_deltas=n_agents > 1,
                 use_net_peer_delta=n_agents > 1,
-                use_current_bit=True,
                 use_group_scores=True,
                 use_group_distances=True,
                 use_trajectory_context=True,
@@ -252,8 +251,6 @@ class FeatureConfig:
                 names.append(f"peer_delta_{p}")
         if self.use_net_peer_delta and n_agents > 1:
             names.append("net_peer_delta")
-        if self.use_current_bit:
-            names.append("current_bit")
         if self.use_group_scores:
             names.extend(["group_rank", "group_fitness_gap"])
         if self.use_group_distances:
@@ -329,13 +326,13 @@ class FeatureExtractor:
             if self.config.use_net_peer_delta:
                 feature_tensors.append(net_peer_delta)
 
-        # 4. Current Bit value: shape (B, N, 1)
-        if self.config.use_current_bit:
-            feature_tensors.append(states.float().unsqueeze(-1))
-
         # 6. Group scores & ranks: shape (B, N, 1)
         if self.config.use_group_scores:
-            if group_metrics is not None:
+            if (
+                group_metrics is not None
+                and group_ctx is not None
+                and group_ctx.config.share_scores
+            ):
                 rank_feat = group_metrics.ranks.unsqueeze(1).unsqueeze(-1).expand(B, N, 1)
                 grp_fit_gap = (
                     group_metrics.fitness_diff_to_group_best.unsqueeze(1)
@@ -349,7 +346,11 @@ class FeatureExtractor:
 
         # 7. Group distances: shape (B, N, 1)
         if self.config.use_group_distances:
-            if group_metrics is not None:
+            if (
+                group_metrics is not None
+                and group_ctx is not None
+                and group_ctx.config.share_distance
+            ):
                 mean_dist = (
                     (group_metrics.mean_peer_distance / float(N))
                     .unsqueeze(1)

@@ -20,19 +20,28 @@ class GroupConfig:
 
     Attributes:
         n_agents: Number of agents in each group (M >= 1). If 1, runs in single-agent mode.
-        share_distance: Whether agents have access to peer distance metrics.
-        share_scores: Whether agents have access to peer fitness scores and deltas to group best.
+        share_distances: Whether agents have access to peer distance metrics.
+        share_distance_mean: Whether agents have access to the mean distance to peers.
+        share_delta_scores: Whether agents have access to peer fitness scores and deltas to group best.
+        share_delta_mean_score: Whether agents have access to the mean delta score of the group.
         share_ranks: Whether agents have access to their fitness ranking within the group.
-        share_consensus: Whether agents have access to group-wide bit/variable consensus frequencies.
-        share_group_best: Whether agents know the overall best state and fitness in their group.
+        
+        share_approachs: Whether agents know if action `i` reduce distance to the peers
+        share_mean_variable: Whether agents know the mean variable of the group
+        share_best_variable: Whether agents know the variable of the best agent in the group
     """
 
     n_agents: int = 1
-    share_distance: bool = True
-    share_scores: bool = True
+    share_distances: bool = True
+    share_distance_mean: bool = True
+    share_delta_scores: bool = True
+    share_delta_mean_score: bool = True
     share_ranks: bool = True
-    share_consensus: bool = True
-    share_group_best: bool = True
+    
+    # NN per action features
+    share_approachs: bool = True
+    share_mean_variable: bool = True
+    share_best_variable: bool = True
 
     @property
     def is_multi_agent(self) -> bool:

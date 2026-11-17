@@ -103,7 +103,7 @@ class BaseStrategy(ABC):
             current_fitness: Current objective values, shape (B,).
             best_fitness: Best objective values found so far, shape (B,).
             group_context: Optional multi-agent group configuration and topology.
-            group_metrics: Optional computed multi-agent group metrics (distances, ranks, consensus).
+            group_metrics: Optional computed multi-agent group metrics (distances, ranks, ...).
             step: Current search step index.
 
         Returns:

@@ -107,7 +107,6 @@ class GroupContext:
                 group_best_states=best_states.clone(),
                 fitness_diff_to_group_best=zeros_b,
                 ranks=torch.ones(B, device=self.device, dtype=torch.float32),
-                consensus_vector=states.float(),
             )
 
         # Reshape to (G, M, D) and (G, M)
@@ -168,9 +167,6 @@ class GroupContext:
         else:
             ranks_normalized = torch.ones(B, device=self.device)
 
-        # 4. Consensus vector: fraction of agents in the group having bit=1, shape (G, D) -> repeat to (B, D)
-        consensus_per_group = states_grouped.float().mean(dim=1)  # (G, D)
-        consensus_vector = torch.repeat_interleave(consensus_per_group, M, dim=0)  # (B, D)
 
         return GroupMetrics(
             pairwise_distances=pairwise_dist_flat,
@@ -181,7 +177,6 @@ class GroupContext:
             group_best_states=group_best_states,
             fitness_diff_to_group_best=fitness_diff,
             ranks=ranks_normalized,
-            consensus_vector=consensus_vector,
         )
 
 
@@ -198,7 +193,6 @@ class GroupMetrics:
         group_best_states: Best state found so far within the agent's group, shape (B, D).
         fitness_diff_to_group_best: Difference between group best fitness and current fitness, shape (B,).
         ranks: Normalized fitness rank within group in [0.0, 1.0], shape (B,).
-        consensus_vector: Group-wide frequency of 1s for each variable/bit, shape (B, D).
     """
 
     pairwise_distances: torch.Tensor
@@ -209,7 +203,6 @@ class GroupMetrics:
     group_best_states: torch.Tensor
     fitness_diff_to_group_best: torch.Tensor
     ranks: torch.Tensor
-    consensus_vector: torch.Tensor
 
     def extract_agent_features(self, config: GroupConfig) -> torch.Tensor:
         """Extract a structured feature tensor per agent based on active sharing permissions.

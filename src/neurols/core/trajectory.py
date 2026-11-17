@@ -43,11 +43,11 @@ class Trajectory:
     final_fitness: torch.Tensor
     best_fitness: torch.Tensor
     steps_taken: torch.Tensor
-    step_history: list[StepRecord] = field(default_factory=list)
-    mean_fitness_history: list[float] = field(default_factory=list)
-    best_fitness_history: list[float] = field(default_factory=list)
-    diversity_history: list[float] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    step_history: list[StepRecord] = field(default_factory=list[StepRecord])
+    mean_fitness_history: list[float] = field(default_factory=list[float])
+    best_fitness_history: list[float] = field(default_factory=list[float])
+    diversity_history: list[float] = field(default_factory=list[float])
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     @property
     def final_mean_fitness(self) -> float:

@@ -146,7 +146,6 @@ class FeatureConfig:
         use_current_bit: Include current bit value x_j.
         use_group_scores: Include agent rank and fitness gap to group best.
         use_group_distances: Include mean and min peer Hamming distances.
-        use_group_consensus: Include group bit frequencies (variable consensus).
         use_trajectory_context: Include step fraction, fitness gap, stagnation counter.
         sort_peer_deltas: Sort peer deltas for strict permutation invariance.
     """
@@ -159,7 +158,6 @@ class FeatureConfig:
     use_current_bit: bool = True
     use_group_scores: bool = True
     use_group_distances: bool = True
-    use_group_consensus: bool = True
     use_trajectory_context: bool = True
     sort_peer_deltas: bool = True
 
@@ -181,7 +179,6 @@ class FeatureConfig:
                 use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
-                use_group_consensus=False,
                 use_trajectory_context=False,
             )
         elif lvl == FeatureAblationLevel.RANKED_DELTA_ONLY:
@@ -194,7 +191,6 @@ class FeatureConfig:
                 use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
-                use_group_consensus=False,
                 use_trajectory_context=False,
             )
         elif lvl == FeatureAblationLevel.DELTA_AND_PEERS:
@@ -207,7 +203,6 @@ class FeatureConfig:
                 use_current_bit=False,
                 use_group_scores=False,
                 use_group_distances=False,
-                use_group_consensus=False,
                 use_trajectory_context=False,
             )
         elif lvl == FeatureAblationLevel.DELTA_PEERS_RANK:
@@ -220,7 +215,6 @@ class FeatureConfig:
                 use_current_bit=False,
                 use_group_scores=n_agents > 1,
                 use_group_distances=n_agents > 1,
-                use_group_consensus=False,
                 use_trajectory_context=False,
             )
         else:  # FULL
@@ -233,7 +227,6 @@ class FeatureConfig:
                 use_current_bit=True,
                 use_group_scores=True,
                 use_group_distances=True,
-                use_group_consensus=True,
                 use_trajectory_context=True,
             )
 
@@ -261,8 +254,6 @@ class FeatureConfig:
             names.append("net_peer_delta")
         if self.use_current_bit:
             names.append("current_bit")
-        if self.use_group_consensus:
-            names.extend(["group_consensus", "diff_to_consensus"])
         if self.use_group_scores:
             names.extend(["group_rank", "group_fitness_gap"])
         if self.use_group_distances:
@@ -342,15 +333,6 @@ class FeatureExtractor:
         if self.config.use_current_bit:
             feature_tensors.append(states.float().unsqueeze(-1))
 
-        # 5. Group consensus frequencies: shape (B, N, 1)
-        if self.config.use_group_consensus:
-            if group_metrics is not None and group_metrics.consensus_vector is not None:
-                consensus = group_metrics.consensus_vector.float().unsqueeze(-1)
-                diff = (states.float().unsqueeze(-1) - consensus).abs()
-            else:
-                consensus = torch.full((B, N, 1), 0.5, device=device)
-                diff = torch.zeros((B, N, 1), device=device)
-            feature_tensors.extend([consensus, diff])
 
         # 6. Group scores & ranks: shape (B, N, 1)
         if self.config.use_group_scores:

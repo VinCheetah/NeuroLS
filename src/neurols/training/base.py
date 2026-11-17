@@ -28,7 +28,7 @@ class GenerationRecord:
     gen_std_fitness: float
     sigma: float
     elapsed_time: float
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 @dataclass
@@ -47,7 +47,7 @@ class TrainResult:
         """Save training summary and best weights to disk."""
         path = Path(filepath)
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
+        data: dict[str, Any] = {
             "best_fitness": self.best_fitness,
             "total_generations": self.total_generations,
             "total_evaluations": self.total_evaluations,

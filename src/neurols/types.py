@@ -52,6 +52,14 @@ class AnnealingSchedule(StrEnum):
     COSINE = "cosine"
 
 
+class Device(StrEnum):
+    """Computation device types."""
+
+    CPU = "cpu"
+    CUDA = "cuda"
+    AUTO = "auto"
+
+
 @dataclass(frozen=True)
 class MoveResult:
     """Encapsulates the decision made by a local search strategy at a given step.

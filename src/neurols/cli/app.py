@@ -28,6 +28,21 @@ from neurols.analysis.plotting import (
     plot_neural_feature_importance,
     plot_training_convergence,
 )
+from neurols.cli.args import (
+    KOption,
+    NbAgentsOption,
+    NbGenerationsOption,
+    NbIterationsOption,
+    NbRestartsOption,
+    NOption,
+    OutputDirOption,
+    PlotOption,
+    PopulationSizeOption,
+    SeedOption,
+    SharedInfoOption,
+    StrategyOption,
+    TrainingOption,
+)
 from neurols.core.group import GroupConfig
 from neurols.core.runner import BatchedRunner
 from neurols.problems.nk_landscape import NKLandscape
@@ -39,12 +54,13 @@ from neurols.strategies.classical import (
     TabuSearch,
 )
 from neurols.strategies.neural import NeuralLocalSearchStrategy
+from neurols.training.base import GenerationRecord
 from neurols.training.cma_es import CMAESOptimizer
 
 app = typer.Typer(
     name="neurols",
     help="NeuroLS: Modular Local Search & Neuroevolution Framework",
-    add_completion=False,
+    add_completion=True,
 )
 console = Console()
 
@@ -76,18 +92,14 @@ def _get_strategy(name: str, **kwargs) -> Any:
 
 @app.command()
 def run(
-    strategy: str = typer.Option("HillClimber", "--strategy", "-s", help="Strategy to run"),
-    n: int = typer.Option(20, "-n", help="NK dimension N (bits)"),
-    k: int = typer.Option(3, "-k", help="NK epistasis K"),
-    steps: int = typer.Option(100, "--steps", help="Max search steps"),
-    restarts: int = typer.Option(8, "--restarts", "-r", help="Number of independent restarts"),
-    agents: int = typer.Option(
-        1, "--agents", "-m", help="Number of agents per group (multi-agent)"
-    ),
-    share_info: bool = typer.Option(
-        True, "--share-info/--no-share-info", help="Share group information"
-    ),
-    seed: int = typer.Option(42, "--seed", help="Random seed"),
+    strategy: StrategyOption = "HillClimber",
+    n: NOption = 32,
+    k: KOption = 4,
+    steps: NbIterationsOption = 100,
+    restarts: NbRestartsOption = 10,
+    agents: NbAgentsOption = 1,
+    share_info: SharedInfoOption = True,
+    seed: SeedOption = 42,
 ) -> None:
     """Execute a local search rollout with live progress and metrics display."""
     console.print(
@@ -154,22 +166,16 @@ def run(
 
 @app.command()
 def benchmark(
-    n: int = typer.Option(25, "-n", help="NK dimension N"),
-    k: int = typer.Option(4, "-k", help="NK epistasis K"),
-    steps: int = typer.Option(100, "--steps", help="Max search steps"),
-    restarts: int = typer.Option(16, "--restarts", "-r", help="Restarts per strategy"),
-    agents: int = typer.Option(1, "--agents", "-m", help="Agents per group"),
-    train_nn: bool = typer.Option(
-        True, "--train-nn/--no-train-nn", help="Train neural strategies via CMA-ES before benchmark"
-    ),
-    train_generations: int = typer.Option(
-        8, "--train-gen", help="Generations to train NN before benchmark"
-    ),
-    plot: bool = typer.Option(True, "--plot/--no-plot", help="Generate and save comparison plots"),
-    output_dir: Path = typer.Option(
-        Path("experiments/benchmark"), "--out", help="Output directory"
-    ),
-    seed: int = typer.Option(42, "--seed", help="Random seed"),
+    n: NOption = 32,
+    k: KOption = 4,
+    steps: NbIterationsOption = 100,
+    restarts: NbRestartsOption = 16,
+    agents: NbAgentsOption = 1,
+    train_nn: TrainingOption = True,
+    train_generations: NbGenerationsOption = 10,
+    plot: PlotOption = True,
+    output_dir: OutputDirOption = Path("experiments/benchmark"),
+    seed: SeedOption = 42,
 ) -> None:
     """Benchmark multiple local search strategies side-by-side with pre-trained neural policies."""
     console.print(
@@ -202,8 +208,8 @@ def benchmark(
             optimizer = CMAESOptimizer(
                 strategy=neural_strat,
                 problem=train_problem,
-                eval_restarts=8,
-                eval_steps=min(steps, 40),
+                eval_restarts=20,
+                eval_steps=steps,
                 population_size=8,
                 group_config=group_cfg,
                 seed=seed,
@@ -270,27 +276,21 @@ def benchmark(
 
 @app.command()
 def train(
-    n: int = typer.Option(20, "-n", help="NK dimension N"),
-    k: int = typer.Option(3, "-k", help="NK epistasis K"),
-    generations: int = typer.Option(10, "--generations", "-g", help="CMA-ES generations"),
-    popsize: int | None = typer.Option(
-        None, "--popsize", help="CMA-ES population size (auto if omitted)"
-    ),
+    n: NOption = 32,
+    k: KOption = 4,
+    generations: NbGenerationsOption = 20,
+    popsize: PopulationSizeOption = 10,
     policy_type: str = typer.Option(
         "linear", "--policy-type", help="Policy architecture (linear, mlp, deepsets)"
     ),
-    eval_restarts: int = typer.Option(
-        8, "--eval-restarts", help="Landscape restarts per evaluation"
-    ),
-    eval_steps: int = typer.Option(40, "--eval-steps", help="Steps per evaluation rollout"),
-    agents: int = typer.Option(1, "--agents", "-m", help="Agents per group during training"),
+    eval_restarts: NbRestartsOption = 8,
+    eval_steps: NbIterationsOption = 40,
+    agents: NbAgentsOption = 1,
     checkpoint_dir: Path = typer.Option(
         Path("checkpoints"), "--ckpt-dir", help="Directory for saving checkpoints"
     ),
-    plot: bool = typer.Option(
-        True, "--plot/--no-plot", help="Generate training progress and weights plots"
-    ),
-    seed: int = typer.Option(42, "--seed", help="Random seed"),
+    plot: PlotOption = True,
+    seed: SeedOption = 42,
 ) -> None:
     """Train a Neural Local Search policy using CMA-ES neuroevolution."""
     console.print(
@@ -341,7 +341,7 @@ def train(
     ) as progress:
         task = progress.add_task("[magenta]Evolving policy...", total=generations)
 
-        def gen_callback(rec) -> None:
+        def gen_callback(rec: GenerationRecord) -> None:
             progress.update(
                 task,
                 advance=1,

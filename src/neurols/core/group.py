@@ -167,7 +167,6 @@ class GroupContext:
         else:
             ranks_normalized = torch.ones(B, device=self.device)
 
-
         return GroupMetrics(
             pairwise_distances=pairwise_dist_flat,
             mean_peer_distance=mean_peer_dist,

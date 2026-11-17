@@ -333,7 +333,6 @@ class FeatureExtractor:
         if self.config.use_current_bit:
             feature_tensors.append(states.float().unsqueeze(-1))
 
-
         # 6. Group scores & ranks: shape (B, N, 1)
         if self.config.use_group_scores:
             if group_metrics is not None:

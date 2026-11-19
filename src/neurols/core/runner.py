@@ -37,6 +37,7 @@ class BatchedRunner:
         stopping_criteria: StoppingCriteria | None = None,
         group_config: GroupConfig | None = None,
         record_history: bool = True,
+        record_states: bool = False,
         device: DeviceType = "cpu",
     ) -> None:
         self.device = torch.device(device)
@@ -57,6 +58,7 @@ class BatchedRunner:
         )
         self.group_config = group_config or GroupConfig(n_agents=1)
         self.record_history = record_history
+        self.record_states = record_states
 
     def run(
         self,
@@ -201,6 +203,14 @@ class BatchedRunner:
             if move_res.stop_mask is not None:
                 active_mask &= ~move_res.stop_mask
 
+            # Compute neighbor rank of chosen moves
+            valid_idx = chosen_moves.clamp(min=0, max=N - 1).unsqueeze(1)
+            chosen_deltas = deltas.gather(1, valid_idx).squeeze(1)
+            action_ranks = (deltas > chosen_deltas.unsqueeze(1)).sum(dim=1)
+
+            # Keep pre-move states snapshot if record_states is enabled
+            pre_move_states = states.clone() if self.record_states else None
+
             # Apply moves only for active agents with valid move index (>= 0)
             valid_moves = (chosen_moves >= 0) & active_mask
             prev_fitness = current_fitness.clone()
@@ -240,6 +250,8 @@ class BatchedRunner:
                         chosen_moves=chosen_moves.clone(),
                         delta_fitness=delta_fit.clone(),
                         group_diversity=torch.tensor(group_metrics.group_diversity),
+                        states=pre_move_states,
+                        action_ranks=action_ranks.clone(),
                     )
                 )
 

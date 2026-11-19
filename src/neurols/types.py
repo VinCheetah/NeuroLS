@@ -169,6 +169,8 @@ class StepRecord:
     chosen_moves: torch.Tensor
     delta_fitness: torch.Tensor
     group_diversity: torch.Tensor | None = None
+    states: torch.Tensor | None = None
+    action_ranks: torch.Tensor | None = None
 
 
 @dataclass

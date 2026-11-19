@@ -1,8 +1,7 @@
-"""Tests for InvariantModule, InvariantNNet, PerActionScorer, and AblationStudy."""
+"""Tests for InvariantModule, InvariantNNet, PerActionScorer, and neural architectures."""
 
 import torch
 
-from neurols.analysis.ablation import AblationStrategySpec, AblationStudy
 from neurols.analysis.multi_agent_study import ModelSpec, MultiAgentStudy
 from neurols.core.group import GroupConfig, GroupContext
 from neurols.core.runner import BatchedRunner
@@ -15,7 +14,6 @@ from neurols.strategies.neural.architectures import (
     PerActionScorer,
 )
 from neurols.strategies.neural.features import (
-    FeatureAblationLevel,
     compute_action_peer_deltas,
     compute_normalized_ranks,
 )
@@ -108,42 +106,6 @@ def test_action_peer_deltas_invariance() -> None:
     assert (n_zeros == 0).all()
 
 
-def test_ablation_study_execution() -> None:
-    train_prob = NKLandscape(n=8, k=2, seed=11)
-    test_prob = NKLandscape(n=8, k=2, seed=22)
-    group_cfg = GroupConfig(n_agents=2)
-
-    specs = [
-        AblationStrategySpec(
-            name="Test_PerAction",
-            ablation_level=FeatureAblationLevel.DELTA_ONLY,
-            policy_type="per_action",
-            description="test",
-        ),
-        AblationStrategySpec(
-            name="Test_InvariantNNet",
-            ablation_level=FeatureAblationLevel.RANKED_DELTA_ONLY,
-            policy_type="invariant_nnet",
-            description="test",
-        ),
-    ]
-
-    study = AblationStudy(
-        train_problem=train_prob,
-        test_problem=test_prob,
-        group_config=group_cfg,
-        train_generations=2,
-        eval_restarts=2,
-        eval_steps=10,
-        cma_popsize=4,
-        test_restarts=4,
-        test_steps=15,
-        seed=42,
-    )
-
-    res = study.run(specs=specs, include_classical_baselines=True)
-    assert len(res.trajectories) == 4  # 2 neural + HillClimber + Tabu
-    assert len(res.summary_table) == 4
 
 
 def test_peer_invariant_action_scorer_invariance() -> None:
@@ -210,7 +172,7 @@ def test_multi_agent_study_run(tmp_path) -> None:
             name="Test_PeerInv",
             model_type="neural",
             policy_type="peer_invariant_per_action",
-            ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
+            features="@action_basic,peer_deltas",
         ),
     ]
 

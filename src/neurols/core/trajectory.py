@@ -67,6 +67,47 @@ class Trajectory:
         """Average of each agent's best-so-far fitness."""
         return float(self.best_fitness.mean().item())
 
+    def get_states_matrix(self, agent_idx: int = 0) -> np.ndarray:
+        """Extract sequence of states visited by an agent as a 2D array of shape (T, N)."""
+        states_list = [self.initial_states[agent_idx].detach().cpu().numpy()]
+        for rec in self.step_history:
+            if rec.states is not None:
+                states_list.append(rec.states[agent_idx].detach().cpu().numpy())
+        if len(states_list) == 1:
+            states_list.append(self.final_states[agent_idx].detach().cpu().numpy())
+        return np.vstack(states_list)
+
+    def get_action_ranks(self, agent_idx: int = 0) -> np.ndarray:
+        """Extract action rank of chosen move at each step for an agent."""
+        ranks: list[int] = []
+        for rec in self.step_history:
+            if rec.action_ranks is not None:
+                ranks.append(int(rec.action_ranks[agent_idx].item()))
+        return np.array(ranks, dtype=np.int64)
+
+    def get_chosen_moves(self, agent_idx: int = 0) -> np.ndarray:
+        """Extract chosen move index at each step for an agent."""
+        moves: list[int] = []
+        for rec in self.step_history:
+            moves.append(int(rec.chosen_moves[agent_idx].item()))
+        return np.array(moves, dtype=np.int64)
+
+    def get_chosen_deltas(self, agent_idx: int = 0) -> np.ndarray:
+        """Extract delta fitness of chosen moves across steps for an agent."""
+        deltas: list[float] = []
+        for rec in self.step_history:
+            deltas.append(float(rec.delta_fitness[agent_idx].item()))
+        return np.array(deltas, dtype=np.float64)
+
+    def get_agent_fitness_history(self, agent_idx: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        """Extract (current_fitness, best_fitness) across steps for an agent."""
+        curr = [float(self.initial_fitness[agent_idx].item())]
+        best = [curr[0]]
+        for rec in self.step_history:
+            curr.append(float(rec.current_fitness[agent_idx].item()))
+            best.append(float(rec.best_fitness[agent_idx].item()))
+        return np.array(curr, dtype=np.float64), np.array(best, dtype=np.float64)
+
     def get_summary(self) -> dict[str, Any]:
         """Compute key summary statistics."""
         best_arr = self.best_fitness.detach().cpu().numpy()

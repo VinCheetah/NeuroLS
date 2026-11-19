@@ -1,4 +1,4 @@
-"""Feature extraction, specification DSL, and ablation pipeline for Neural Local Search.
+"""Feature extraction and specification DSL for Neural Local Search.
 
 Translates problem states, candidate move deltas, multi-agent group metrics, and
 action-specific peer distance transitions into structured tensor representations,
@@ -78,6 +78,7 @@ def compute_action_peer_deltas(
     group_ctx: GroupContext | None,
     sort_peers: bool = True,
     group_metrics: GroupMetrics | None = None,
+    current_fitness: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute action-specific peer distance changes (+1 / -1) for each candidate 1-bit flip.
 
@@ -85,7 +86,7 @@ def compute_action_peer_deltas(
     - Flipping bit j increases distance to peer m by +1 if x_m[j] == x_self[j].
     - Flipping bit j decreases distance to peer m by -1 if x_m[j] != x_self[j].
 
-    Peers are canonically ordered by descending fitness (best peer first) to provide
+    Peers are canonically ordered by descending current fitness (best peer first) to provide
     a consistent, permutation-invariant semantic representation.
 
     Args:
@@ -93,6 +94,7 @@ def compute_action_peer_deltas(
         group_ctx: Multi-agent group context.
         sort_peers: Whether to ensure peers are ordered by fitness.
         group_metrics: Precomputed GroupMetrics (optional, for speed).
+        current_fitness: Current fitness tensor of agents, shape (B,).
 
     Returns:
         peer_deltas: Tensor of shape (B, N, max(M-1, 1)) in {-1.0, +1.0}.
@@ -116,12 +118,19 @@ def compute_action_peer_deltas(
     D = N
     states_grouped = states.view(G, M, D)
 
+    eye = torch.eye(M, device=device, dtype=torch.bool).unsqueeze(0)
+
     if group_metrics is not None and group_metrics.ordered_peer_indices.shape[-1] == M - 1:
         ordered_peer_idx = group_metrics.ordered_peer_indices.view(G, M, M - 1)
+    elif current_fitness is not None and sort_peers:
+        # Canonical ordering: sort peers by descending current fitness
+        fitness_grouped = current_fitness.view(G, M)
+        peer_fit_matrix = fitness_grouped.unsqueeze(1).expand(G, M, M).clone()
+        peer_fit_masked = peer_fit_matrix.masked_fill(eye, -float("inf"))
+        _, sorted_peer_idx = peer_fit_masked.sort(dim=-1, descending=True)
+        ordered_peer_idx = sorted_peer_idx[:, :, : M - 1]
     else:
-        # Default: mask self on diagonal
-        eye = torch.eye(M, device=device, dtype=torch.bool).unsqueeze(0)
-        # Dummy order by index if fitness is not provided
+        # Default fallback: mask self on diagonal
         ordered_peer_idx = (
             torch.arange(M, device=device).expand(G, M, M).masked_select(~eye).view(G, M, M - 1)
         )
@@ -139,8 +148,8 @@ def compute_action_peer_deltas(
     # Permute to (G, M, D, M - 1) and reshape to (B, N, M - 1)
     peer_deltas = peer_deltas_raw.permute(0, 1, 3, 2).reshape(B, N, M - 1)
 
-    # If no fitness ranking was provided and sort_peers is True, sort values directly
-    if group_metrics is None and sort_peers and (M - 1) > 1:
+    # When no explicit fitness or metric ordering is supplied, sort deltas directly
+    if group_metrics is None and current_fitness is None and sort_peers and (M - 1) > 1:
         peer_deltas, _ = peer_deltas.sort(dim=-1, descending=False)
 
     net_peer_delta = peer_deltas.mean(dim=-1, keepdim=True)  # (B, N, 1)
@@ -234,8 +243,8 @@ FEATURE_REGISTRY: dict[str, FeatureDescriptor] = {
         category="action",
         description="Bit value of current group best-performing agent for locus j in {0, 1}",
         formula="x_{group_best}[j]",
-        is_multi_agent=False,
-        dim_fn=lambda m: 1,
+        is_multi_agent=True,
+        dim_fn=lambda m: 1 if m > 1 else 0,
     ),
     "current_locus": FeatureDescriptor(
         name="current_locus",
@@ -368,9 +377,9 @@ FEATURE_CANONICAL: dict[str, str] = {
 
 # Group Keywords
 FEATURE_GROUPS: dict[str, list[str]] = {
-    "action_basic": ["delta", "ranked_delta"],
+    "basic": ["delta", "ranked_delta"],
     "basic_action": ["delta", "ranked_delta"],
-    "action_group": ["peer_deltas", "net_peer_delta", "group_mean_locus", "best_locus"],
+    "action_basic": ["delta", "ranked_delta"],
     "group_action": ["peer_deltas", "net_peer_delta", "group_mean_locus", "best_locus"],
     "action_all": [
         "delta",
@@ -384,15 +393,6 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     ],
     "scores": ["current_fitness", "delta_mean_score", "peer_delta_scores", "normalized_rank"],
     "distances": ["dist_group_barycentre", "dist_others_barycentre", "peer_distances"],
-    "agent_group": [
-        "current_fitness",
-        "dist_group_barycentre",
-        "dist_others_barycentre",
-        "peer_distances",
-        "delta_mean_score",
-        "peer_delta_scores",
-        "normalized_rank",
-    ],
     "group_agent": [
         "current_fitness",
         "dist_group_barycentre",
@@ -739,6 +739,7 @@ class FeatureExtractor:
                         group_ctx=group_ctx,
                         sort_peers=True,
                         group_metrics=group_metrics,
+                        current_fitness=current_fitness,
                     )
                 if feat == "peer_deltas":
                     if is_multi and cached_peer_deltas is not None:

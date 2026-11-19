@@ -331,3 +331,52 @@ def test_cli_run_with_custom_features_and_mode() -> None:
     )
     assert res.exit_code == 0
     assert "Mean Best Fitness" in res.output
+
+
+def test_all_actions_permutation_invariance() -> None:
+    """Verify that all_actions evaluation mode is strictly permutation-invariant across loci."""
+    from neurols.strategies.neural.features import EvaluationMode
+    from neurols.strategies.neural.neural_strategy import NeuralLocalSearchStrategy
+
+    n = 8
+    # Dense policy flattens the neighborhood, so without delta sorting it would be permutation-sensitive
+    strategy = NeuralLocalSearchStrategy(
+        policy_type="dense",
+        eval_mode=EvaluationMode.ALL_ACTIONS,
+        features="@action_basic",
+        n_actions=n,
+        n_agents=1,
+        seed=123,
+    )
+
+    states = torch.tensor([[0, 1, 0, 0, 1, 1, 0, 1]], dtype=torch.int8)
+    deltas = torch.tensor([[0.1, 0.9, -0.4, 0.3, -0.1, 0.5, 0.0, -0.8]], dtype=torch.float32)
+    fitness = torch.tensor([0.5], dtype=torch.float32)
+
+    # Move chosen under original ordering
+    res_orig = strategy.select_move(
+        states=states,
+        deltas=deltas,
+        current_fitness=fitness,
+        best_fitness=fitness,
+        step=0,
+    )
+    chosen_orig = res_orig.chosen_moves[0].item()
+
+    # Apply an arbitrary locus permutation pi
+    perm = torch.tensor([4, 2, 7, 0, 1, 6, 3, 5])
+    states_perm = states[:, perm]
+    deltas_perm = deltas[:, perm]
+
+    res_perm = strategy.select_move(
+        states=states_perm,
+        deltas=deltas_perm,
+        current_fitness=fitness,
+        best_fitness=fitness,
+        step=0,
+    )
+    chosen_perm = res_perm.chosen_moves[0].item()
+
+    # The chosen move in permuted space must correspond to the original chosen move:
+    # locus perm[chosen_perm] must be chosen_orig
+    assert perm[chosen_perm].item() == chosen_orig

@@ -1,13 +1,14 @@
 """Multi-agent and multi-model comparative experimental framework.
 
 Compares neural local search architectures (InvariantNNet, Peer-Invariant action scorers,
-per-action ablation variants) across different agent population sizes (e.g. 1, 4, 10 agents),
+per-action neural variants) across different agent population sizes (e.g. 1, 4, 10 agents),
 with and without information sharing, under customizable stopping criteria (steps, time, budget).
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -27,10 +28,15 @@ from neurols.core.problem import BatchedProblem
 from neurols.core.runner import BatchedRunner
 from neurols.core.trajectory import Trajectory
 from neurols.strategies.base import BaseStrategy
-from neurols.strategies.classical import FirstImprovement, HillClimber, RandomWalk, TabuSearch
+from neurols.strategies.classical import (
+    FirstImprovement,
+    HillClimber,
+    RandomWalk,
+    SimulatedAnnealing,
+    TabuSearch,
+)
 from neurols.strategies.neural.features import (
     FEATURE_REGISTRY,
-    FeatureAblationLevel,
     FeatureConfig,
 )
 from neurols.strategies.neural.neural_strategy import NeuralLocalSearchStrategy
@@ -44,13 +50,56 @@ class ModelSpec:
     """Specification of a strategy or neural model variant."""
 
     name: str
-    model_type: str  # "neural" or "classical"
-    policy_type: str = "invariant_nnet"
+    model_type: str = "neural"  # "neural" or "classical"
+    policy_type: str = "linear"  # "linear", "mlp", "deepsets", "peer_invariant", etc.
     eval_mode: str = "per_action"  # "per_action" or "all_actions"
     features: str | list[str] | None = None
-    ablation_level: FeatureAblationLevel = FeatureAblationLevel.FULL
+    n_agents: int = 1
     description: str = ""
 
+    def to_strategy(
+        self,
+        n_actions: int = 20,
+        n_agents: int = 1,
+        steps: int = 100,
+        seed: int | None = None,
+    ) -> BaseStrategy:
+        """Instantiate a runnable BaseStrategy from this ModelSpec."""
+        agents = max(self.n_agents, n_agents)
+        if self.model_type == "classical":
+            name_lower = self.name.lower()
+            if "first" in name_lower:
+                return FirstImprovement(order="random", seed=seed, name=self.name)
+            elif "tabu" in name_lower:
+                return TabuSearch(tenure=5, name=self.name)
+            elif "random" in name_lower:
+                return RandomWalk(exploration_rate=1.0, seed=seed, name=self.name)
+            elif "simulated" in name_lower or "anneal" in name_lower:
+                return SimulatedAnnealing(max_steps=steps, seed=seed, name=self.name)
+            else:
+                return HillClimber(name=self.name)
+        else:
+            feat_cfg = FeatureConfig.from_specs(self.features, mode=self.eval_mode)
+            return NeuralLocalSearchStrategy(
+                name=self.name,
+                policy_type=self.policy_type,  # type: ignore
+                eval_mode=self.eval_mode,
+                feature_config=feat_cfg,
+                n_actions=n_actions,
+                n_agents=agents,
+                max_steps=steps,
+                seed=seed,
+            )
+
+
+# Suite: Classical Baselines Only
+BASELINES_SUITE = [
+    ModelSpec(name="HillClimber", model_type="classical", description="Steepest ascent greedy hill climber."),
+    ModelSpec(name="FirstImprovement", model_type="classical", description="First improving neighbor local search."),
+    ModelSpec(name="TabuSearch", model_type="classical", description="Tabu Search with short-term tenure memory."),
+    ModelSpec(name="SimulatedAnnealing", model_type="classical", description="Simulated Annealing with geometric cooling schedule."),
+    ModelSpec(name="RandomWalk", model_type="classical", description="Unbiased random walk exploration."),
+]
 
 # Preset 1: Action-Level Neural Local Search vs Baselines (User Focus)
 PER_ACTION_STUDY_SUITE = [
@@ -60,7 +109,6 @@ PER_ACTION_STUDY_SUITE = [
         policy_type="peer_invariant_per_action",
         eval_mode="per_action",
         features="@action_basic,peer_deltas",
-        ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
         description="Per-action scorer with DeepSets invariant module over basic +/-1 peer distance changes.",
     ),
     ModelSpec(
@@ -69,7 +117,6 @@ PER_ACTION_STUDY_SUITE = [
         policy_type="per_action",
         eval_mode="per_action",
         features="ranked_delta",
-        ablation_level=FeatureAblationLevel.RANKED_DELTA_ONLY,
         description="Per-action scorer using dual-pole normalized ranks (unshared).",
     ),
     ModelSpec(
@@ -78,7 +125,6 @@ PER_ACTION_STUDY_SUITE = [
         policy_type="per_action",
         eval_mode="per_action",
         features="delta",
-        ablation_level=FeatureAblationLevel.DELTA_ONLY,
         description="Per-action scorer using raw delta fitness only (unshared).",
     ),
     ModelSpec(
@@ -91,18 +137,38 @@ PER_ACTION_STUDY_SUITE = [
         model_type="classical",
         description="Classical Tabu Search baseline (group-agnostic).",
     ),
+    ModelSpec(
+        name="SimulatedAnnealing (Baseline)",
+        model_type="classical",
+        description="Simulated Annealing baseline.",
+    ),
 ]
 
 # Preset 2: All Architectures Comparison
 ARCHITECTURES_SUITE = [
     ModelSpec(
-        name="InvariantNNet (All-Actions)",
+        name="LinearScorer (Per-Action)",
         model_type="neural",
-        policy_type="invariant_nnet",
+        policy_type="linear",
+        eval_mode="per_action",
+        features="@basic",
+        description="Interpretable linear model combining delta and rank.",
+    ),
+    ModelSpec(
+        name="MLP_PerAction (Per-Action)",
+        model_type="neural",
+        policy_type="mlp",
+        eval_mode="per_action",
+        features="@basic",
+        description="Deep MLP evaluating candidate moves independently.",
+    ),
+    ModelSpec(
+        name="DeepSets (All-Actions)",
+        model_type="neural",
+        policy_type="deepsets",
         eval_mode="all_actions",
-        features="@all",
-        ablation_level=FeatureAblationLevel.FULL,
-        description="Joint DeepSets InvariantNNet evaluating all N candidate actions jointly.",
+        features="@basic",
+        description="Encoder-Pool-Decoder architecture with global neighborhood context.",
     ),
     ModelSpec(
         name="PeerInvariant (Per-Action)",
@@ -110,31 +176,12 @@ ARCHITECTURES_SUITE = [
         policy_type="peer_invariant_per_action",
         eval_mode="per_action",
         features="@action_basic,peer_deltas",
-        ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
-        description="Per-action scorer using InvariantModule over peer features for each move.",
-    ),
-    ModelSpec(
-        name="Dense_Neighborhood (All-Actions)",
-        model_type="neural",
-        policy_type="dense",
-        eval_mode="all_actions",
-        features="@action_basic,best_locus",
-        ablation_level=FeatureAblationLevel.FULL,
-        description="Dense MLP evaluating entire neighborhood simultaneously in a single forward pass.",
-    ),
-    ModelSpec(
-        name="NN_DeltaOnly (Per-Action)",
-        model_type="neural",
-        policy_type="per_action",
-        eval_mode="per_action",
-        features="delta",
-        ablation_level=FeatureAblationLevel.DELTA_ONLY,
-        description="Ablated neural model using only raw delta fitness.",
+        description="Per-action scorer with peer invariance over distance deltas.",
     ),
     ModelSpec(
         name="HillClimber (Baseline)",
         model_type="classical",
-        description="Classical Greedy Steepest Ascent baseline (group-agnostic).",
+        description="Classical Greedy Steepest Ascent baseline.",
     ),
     ModelSpec(
         name="TabuSearch (Baseline)",
@@ -146,32 +193,28 @@ ARCHITECTURES_SUITE = [
 # Preset 3: Full Comparison Suite
 FULL_COMPARISON_SUITE = [
     ModelSpec(
-        name="InvariantNNet_Full (All-Actions)",
+        name="NN_Linear_Basic",
         model_type="neural",
-        policy_type="invariant_nnet",
-        ablation_level=FeatureAblationLevel.FULL,
-        description="Joint DeepSets InvariantNNet with full group metrics and context.",
+        policy_type="linear",
+        eval_mode="per_action",
+        features="@basic",
+        description="Linear policy scoring delta and rank.",
     ),
     ModelSpec(
-        name="PeerInvariant_Basic (Per-Action)",
+        name="PeerInvariant_Sharing",
         model_type="neural",
         policy_type="peer_invariant_per_action",
-        ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
+        eval_mode="per_action",
+        features="@action_basic,peer_deltas",
         description="Per-action scorer with peer invariance over distance deltas.",
     ),
     ModelSpec(
-        name="NN_RankedDelta (Per-Action)",
+        name="NN_RankedDelta",
         model_type="neural",
         policy_type="per_action",
-        ablation_level=FeatureAblationLevel.RANKED_DELTA_ONLY,
+        eval_mode="per_action",
+        features="ranked_delta",
         description="Scale-invariant normalized ranks per action.",
-    ),
-    ModelSpec(
-        name="NN_DeltaOnly (Per-Action)",
-        model_type="neural",
-        policy_type="per_action",
-        ablation_level=FeatureAblationLevel.DELTA_ONLY,
-        description="Ablated raw delta fitness only.",
     ),
     ModelSpec(
         name="HillClimber (Baseline)",
@@ -183,22 +226,29 @@ FULL_COMPARISON_SUITE = [
         model_type="classical",
         description="Tabu Search baseline with short-term memory tenure.",
     ),
+    ModelSpec(
+        name="SimulatedAnnealing (Baseline)",
+        model_type="classical",
+        description="Simulated Annealing baseline.",
+    ),
 ]
 
 DEFAULT_MULTIAGENT_MODELS = [
     ModelSpec(
-        name="NN_DeltaAndPeers (Per-Action)",
+        name="PeerInvariant_Sharing",
         model_type="neural",
-        policy_type="per_action",
-        ablation_level=FeatureAblationLevel.DELTA_AND_PEERS,
-        description="",
+        policy_type="peer_invariant_per_action",
+        eval_mode="per_action",
+        features="@action_basic,peer_deltas",
+        description="Peer-invariant neural strategy with distance sharing.",
     ),
     ModelSpec(
-        name="NN_DeltaOnly (Per-Action)",
+        name="NN_Linear (Unshared)",
         model_type="neural",
-        policy_type="per_action",
-        ablation_level=FeatureAblationLevel.DELTA_ONLY,
-        description="",
+        policy_type="linear",
+        eval_mode="per_action",
+        features="@basic",
+        description="Linear neural model with delta and ranked delta.",
     ),
     ModelSpec(
         name="HillClimber (Baseline)",
@@ -216,12 +266,16 @@ DEFAULT_MULTIAGENT_MODELS = [
 def get_study_suite(preset: str) -> list[ModelSpec]:
     """Retrieve predefined model suites by name."""
     p = preset.lower().replace("-", "_").replace(" ", "_")
-    if "action" in p:
+    if "base" in p:
+        return BASELINES_SUITE
+    elif "action" in p:
         return PER_ACTION_STUDY_SUITE
     elif "arch" in p:
         return ARCHITECTURES_SUITE
     elif "full" in p or "all" in p:
         return FULL_COMPARISON_SUITE
+    elif "multi" in p:
+        return DEFAULT_MULTIAGENT_MODELS
     else:
         return ARCHITECTURES_SUITE
 
@@ -330,12 +384,7 @@ class MultiAgentStudy:
             share_ranks=share_info,
             share_approachs=share_info,
         )
-        if spec.features is not None:
-            feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
-        else:
-            feat_cfg = FeatureConfig.from_ablation_level(
-                spec.ablation_level, n_agents=n_agents, mode=spec.eval_mode
-            )
+        feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
 
         strategy = NeuralLocalSearchStrategy(
             name=spec.name,
@@ -381,12 +430,7 @@ class MultiAgentStudy:
         for spec in self.models:
             for m in self.agent_counts:
                 # Test whether model at m is group-aware
-                if spec.features is not None:
-                    feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
-                else:
-                    feat_cfg = FeatureConfig.from_ablation_level(
-                        spec.ablation_level, n_agents=m, mode=spec.eval_mode
-                    )
+                feat_cfg = FeatureConfig.from_specs(spec.features, mode=spec.eval_mode)
 
                 is_group_aware = (
                     spec.model_type == "neural"
@@ -459,8 +503,9 @@ class MultiAgentStudy:
             mean_div = float(np.mean(traj.diversity_history)) if traj.diversity_history else 0.0
             mean_steps_val = float(traj.steps_taken.float().mean().item())
 
+            m_label = f"{re.sub(r'_M\d+$', '', spec.name)}_M{m}"
             rec = MultiAgentRunRecord(
-                model_name=spec.name,
+                model_name=m_label,
                 n_agents=m,
                 share_info=share,
                 is_group_aware=is_group_aware,

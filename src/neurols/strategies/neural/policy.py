@@ -190,11 +190,34 @@ class PerActionScorer(BaseNeuralPolicy):
         self,
         num_features: int,
         hidden_layers: list[int] | tuple[int, ...] = (16, 16),
+        init_heuristic: bool = True,
     ) -> None:
         super().__init__()
         self.num_features = num_features
         layers_size = [num_features, *hidden_layers, 1]
         self.net = Net(layers_size)
+        if init_heuristic:
+            self.init_heuristic_weights()
+
+    def init_heuristic_weights(self) -> None:
+        """Initialize weights so that candidate actions with positive delta get positive scores initially."""
+        with torch.no_grad():
+            for layer in self.net.layers:
+                if isinstance(layer, nn.Linear):
+                    layer.weight.data.zero_()
+                    if layer.bias is not None:
+                        layer.bias.data.zero_()
+            # Feature 0 (delta_fitness) forward propagation path
+            first = self.net.layers[0]
+            if isinstance(first, nn.Linear):
+                first.weight.data[:, 0] = 1.0
+            for layer in self.net.layers[1:-1]:
+                if isinstance(layer, nn.Linear):
+                    dim = min(layer.in_features, layer.out_features)
+                    layer.weight.data[:dim, :dim] = torch.eye(dim)
+            last = self.net.layers[-1]
+            if isinstance(last, nn.Linear):
+                last.weight.data.fill_(1.0 / max(last.in_features, 1))
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         return self.net(features.float()).squeeze(-1)

@@ -49,6 +49,10 @@ class BaseStrategy(ABC):
         """Name of the strategy."""
         return self._name
 
+    @name.setter
+    def name(self, value: str) -> None:
+        self._name = value
+
     @property
     @abstractmethod
     def is_deterministic(self) -> bool:

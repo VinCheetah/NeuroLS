@@ -158,7 +158,6 @@ SeedOption = Annotated[
     int,
     typer.Option(
         "--seed",
-        "-s",
         help="The random seed for the experiment.",
     ),
 ]
@@ -173,6 +172,34 @@ NbGenerationsOption = Annotated[
     ),
 ]
 
+Sigma0Option = Annotated[
+    float,
+    typer.Option(
+        "--sigma0",
+        help="Initial mutation step-size (standard deviation) for CMA-ES.",
+        min=0.01,
+        max=5.0,
+    ),
+]
+
+EvalRestartsOption = Annotated[
+    int,
+    typer.Option(
+        "--eval-restarts",
+        help="Number of rollouts/restarts per candidate during training evaluation.",
+        min=1,
+    ),
+]
+
+EvalStepsOption = Annotated[
+    int,
+    typer.Option(
+        "--eval-steps",
+        help="Number of search steps per rollout during training evaluation.",
+        min=1,
+    ),
+]
+
 PlotOption = Annotated[
     bool,
     typer.Option(
@@ -181,10 +208,19 @@ PlotOption = Annotated[
     ),
 ]
 
+PlotsOption = Annotated[
+    str | None,
+    typer.Option(
+        "--plots",
+        help="Plots to generate: comma-separated names or keywords ('@default', '@all', '@benchmark', '@explore', '@training', etc.).",
+    ),
+]
+
 TrainingOption = Annotated[
     bool,
     typer.Option(
         "--train/--no-train",
+        "--train-nn/--no-train-nn",
         help="Whether to train the neural strategy before benchmarking.",
     ),
 ]

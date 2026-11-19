@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +73,7 @@ class ExperimentLogger:
         max_steps: int | None = 100,
         stopping_criteria: StoppingCriteria | None = None,
         group_config: GroupConfig | None = None,
+        progress_callback: Callable[[str, int, int, dict[str, Any]], None] | None = None,
         seed: int = 42,
     ) -> ComparisonResult:
         """Execute a controlled comparison across multiple local search strategies."""
@@ -87,7 +89,10 @@ class ExperimentLogger:
         gen = torch.Generator().manual_seed(seed)
         fixed_initial_states = problem.sample_initial_states((B,), generator=gen)
 
-        for strat in strategies:
+        for i, strat in enumerate(strategies, 1):
+            if progress_callback:
+                progress_callback(strat.name, i, len(strategies), {})
+
             runner = BatchedRunner(
                 problem=problem,
                 strategy=strat,
@@ -104,6 +109,9 @@ class ExperimentLogger:
 
             summary = summarize_trajectory(traj)
             summary_rows.append({"strategy": strat.name, **summary})
+
+            if progress_callback:
+                progress_callback(strat.name, i, len(strategies), summary)
 
         # Sort summary rows by mean best fitness descending
         summary_rows.sort(key=lambda r: r["mean_best_fitness"], reverse=True)

@@ -1,7 +1,6 @@
 """Neural Local Search strategies, architectures, and feature pipelines."""
 
 from neurols.strategies.neural.features import (
-    FeatureAblationLevel,
     FeatureConfig,
     FeatureExtractor,
     compute_action_peer_deltas,
@@ -21,8 +20,7 @@ from neurols.strategies.neural.policy import (
 )
 
 __all__ = [
-    # Feature extraction & ablation
-    "FeatureAblationLevel",
+    # Feature extraction
     "FeatureConfig",
     "FeatureExtractor",
     "compute_action_peer_deltas",

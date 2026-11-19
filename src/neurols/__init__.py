@@ -4,15 +4,18 @@ Enables studying local search heuristics, metaheuristics, multi-agent dynamics,
 and neuroevolution (CMA-ES) on combinatorial and continuous landscapes.
 """
 
-from neurols.analysis.ablation import (
-    DEFAULT_ABLATION_SUITE,
-    AblationStrategySpec,
-    AblationStudy,
-)
 from neurols.analysis.experiment import ComparisonResult, ExperimentLogger
 from neurols.analysis.interpretability import (
+    FeatureInspectionInfo,
+    ModelInspector,
+    RealNKSession,
+    SensitivityCurveResult,
+    SensitivitySurfaceResult,
+    SingleActionEvaluation,
     compute_feature_sensitivities,
     explain_decision,
+    get_feature_metadata,
+    sample_feature_value,
 )
 from neurols.analysis.metrics import (
     compute_auc,
@@ -54,7 +57,6 @@ from neurols.strategies.neural import (
     BaseNeuralPolicy,
     DeepSetsPolicy,
     EquivariantMLPPolicy,
-    FeatureAblationLevel,
     FeatureConfig,
     FeatureExtractor,
     InvariantModule,
@@ -122,7 +124,6 @@ __all__ = [
     "NeuralLocalSearchStrategy",
     "FeatureConfig",
     "FeatureExtractor",
-    "FeatureAblationLevel",
     "compute_action_peer_deltas",
     "compute_normalized_ranks",
     "BaseNeuralPolicy",
@@ -140,9 +141,6 @@ __all__ = [
     "CMAESOptimizer",
     "GenerationRecord",
     "TrainResult",
-    "AblationStudy",
-    "AblationStrategySpec",
-    "DEFAULT_ABLATION_SUITE",
     "MultiAgentStudy",
     "MultiAgentStudyResult",
     "ModelSpec",
@@ -163,6 +161,14 @@ __all__ = [
     "plot_neural_feature_importance",
     "explain_decision",
     "compute_feature_sensitivities",
+    "ModelInspector",
+    "RealNKSession",
+    "FeatureInspectionInfo",
+    "SingleActionEvaluation",
+    "SensitivityCurveResult",
+    "SensitivitySurfaceResult",
+    "get_feature_metadata",
+    "sample_feature_value",
     # CLI
     "app",
     "main",

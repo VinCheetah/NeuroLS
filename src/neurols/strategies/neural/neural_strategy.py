@@ -16,7 +16,6 @@ from neurols.core.group import GroupContext, GroupMetrics
 from neurols.strategies.base import BaseStrategy
 from neurols.strategies.neural.features import (
     EvaluationMode,
-    FeatureAblationLevel,
     FeatureConfig,
     FeatureExtractor,
 )
@@ -60,8 +59,8 @@ class NeuralLocalSearchStrategy(BaseStrategy):
         ] = "linear",
         eval_mode: EvaluationMode | str = EvaluationMode.PER_ACTION,
         features: str | list[str] | None = None,
-        ablation_level: FeatureAblationLevel | str = FeatureAblationLevel.FULL,
         feature_config: FeatureConfig | None = None,
+        ablation_level: Any = None,
         selection_mode: MoveSelectionMode | str = MoveSelectionMode.ARGMAX,
         n_actions: int = 20,
         n_agents: int = 1,
@@ -84,11 +83,6 @@ class NeuralLocalSearchStrategy(BaseStrategy):
             seed=seed,
         )
         self.policy_type = policy_type
-        self.ablation_level = (
-            FeatureAblationLevel(ablation_level)
-            if isinstance(ablation_level, (FeatureAblationLevel, str))
-            else FeatureAblationLevel.FULL
-        )
         self.n_actions = n_actions
         self.n_agents = n_agents
         self.remix = remix
@@ -96,15 +90,9 @@ class NeuralLocalSearchStrategy(BaseStrategy):
 
         if feature_config is not None:
             self.feature_config = feature_config
-        elif features is not None:
+        else:
             self.feature_config = FeatureConfig.from_specs(
                 spec=features,
-                mode=self.eval_mode,
-            )
-        else:
-            self.feature_config = FeatureConfig.from_ablation_level(
-                level=self.ablation_level,
-                n_agents=self.n_agents,
                 mode=self.eval_mode,
             )
 
@@ -206,7 +194,6 @@ class NeuralLocalSearchStrategy(BaseStrategy):
             "eval_mode": self.eval_mode.value,
             "policy_type": self.policy_type,
             "features": self.feature_config.features,
-            "ablation_level": self.ablation_level.value,
             "temperature": self.temperature,
             "selection_mode": self.selection_mode.value,
             "stop_at_local_optimum": self.stop_at_local_optimum,
@@ -270,7 +257,22 @@ class NeuralLocalSearchStrategy(BaseStrategy):
 
         # 2. Forward pass through policy network: shape (B, N)
         with torch.no_grad():
-            logits = self.policy(features)
+            if self.eval_mode == EvaluationMode.ALL_ACTIONS:
+                # Canonicalize candidate actions by sorting by descending delta_f.
+                # Guarantees permutation invariance across candidate loci.
+                _, sort_indices = torch.sort(deltas, dim=-1, descending=True)
+                f_dim = features.shape[-1]
+                gather_idx = sort_indices.unsqueeze(-1).expand(B, N, f_dim)
+                features_sorted = torch.gather(features, dim=1, index=gather_idx)
+
+                sorted_logits = self.policy(features_sorted)
+
+                # Scatter logits back to the original action indices: shape (B, N)
+                logits = torch.empty_like(sorted_logits).scatter_(
+                    dim=-1, index=sort_indices, src=sorted_logits
+                )
+            else:
+                logits = self.policy(features)
 
         # 3. Action selection
         probs: torch.Tensor | None = None
